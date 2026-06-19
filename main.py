@@ -12,7 +12,7 @@ import os
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
-# دیتابیس ساده
+# ---------------- DATABASE ----------------
 db = sqlite3.connect("users.db", check_same_thread=False)
 cur = db.cursor()
 
@@ -56,13 +56,11 @@ def check_rules(user_id):
     return False
 
 
-
+# ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user.id
-
     add_user(user)
-
 
     if not check_rules(user):
 
@@ -75,9 +73,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
         ]
 
-
         await update.message.reply_text(
-"""
+            """
 📜 قوانین ربات:
 
 1- استفاده درست از ربات الزامی است
@@ -97,34 +94,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-
-    await menu(update)
-
+    await menu(update, context)
 
 
-async def menu(update):
+# ---------------- MENU ----------------
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     buttons = [
         [
-            InlineKeyboardButton(
-                "🎬 ساخت ویدیو",
-                callback_data="video"
-            )
+            InlineKeyboardButton("🎬 ساخت ویدیو", callback_data="video")
         ],
         [
-            InlineKeyboardButton(
-                "🎵 ساخت آهنگ",
-                callback_data="music"
-            )
+            InlineKeyboardButton("🎵 ساخت آهنگ", callback_data="music")
         ],
         [
-            InlineKeyboardButton(
-                "🪙 سکه من",
-                callback_data="coins"
-            )
+            InlineKeyboardButton("🪙 سکه من", callback_data="coins")
         ]
     ]
-
 
     await update.message.reply_text(
         "خوش آمدی 👋\nانتخاب کن:",
@@ -132,40 +118,27 @@ async def menu(update):
     )
 
 
-
+# ---------------- CALLBACK ----------------
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     q = update.callback_query
-
     await q.answer()
-
 
     if q.data == "accept":
 
         accept_rules(q.from_user.id)
 
-        await q.edit_message_text(
-            "✅ قوانین قبول شد"
-        )
+        await q.edit_message_text("✅ قوانین قبول شد")
 
-        await q.message.reply_text(
-            "منوی ربات فعال شد"
-        )
-
+        await q.message.reply_text("منوی ربات فعال شد /start")
 
     elif q.data == "video":
 
-        await q.edit_message_text(
-            "🎬 متن ویدیو را بفرست"
-        )
-
+        await q.edit_message_text("🎬 متن ویدیو را بفرست")
 
     elif q.data == "music":
 
-        await q.edit_message_text(
-            "🎵 متن آهنگ را بفرست"
-        )
-
+        await q.edit_message_text("🎵 متن آهنگ را بفرست")
 
     elif q.data == "coins":
 
@@ -176,24 +149,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         coins = cur.fetchone()[0]
 
-        await q.edit_message_text(
-            f"🪙 موجودی شما: {coins}"
-        )
+        await q.edit_message_text(f"🪙 موجودی شما: {coins}")
 
 
-
+# ---------------- RUN BOT ----------------
 app = Application.builder().token(BOT_TOKEN).build()
 
-
-app.add_handler(
-    CommandHandler("start", start)
-)
-
-app.add_handler(
-    CallbackQueryHandler(button)
-)
-
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button))
 
 print("Bot Started")
-
 app.run_polling()
