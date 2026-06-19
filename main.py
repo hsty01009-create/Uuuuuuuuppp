@@ -9,7 +9,7 @@ import sqlite3
 import os
 
 
-BOT_TOKEN = "توکن_ربات_اینجا"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 
 # دیتابیس ساده
