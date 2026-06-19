@@ -1,3 +1,4 @@
+from ai import generate_music, generate_video, generate_voice
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
