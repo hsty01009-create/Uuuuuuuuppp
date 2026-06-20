@@ -1,0 +1,4 @@
+python-telegram-bot
+TTS
+torch --index-url https://download.pytorch.org/whl/cpu
+numpy
