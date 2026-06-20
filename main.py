@@ -1,128 +1,145 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
+import sqlite3
+import os
 
-from config import BOT_TOKEN
-from database import create_db, add_user, accept_rules, is_accepted, get_coins
-from ai import generate_music, generate_video, generate_voice
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ذخیره وضعیت کاربر: video / music / voice
+# ---------------- DATABASE ----------------
+db = sqlite3.connect("users.db", check_same_thread=False)
+cur = db.cursor()
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS users(
+    id INTEGER PRIMARY KEY,
+    coins INTEGER DEFAULT 100,
+    accepted INTEGER DEFAULT 0
+)
+""")
+
+db.commit()
+
+def add_user(user_id):
+    cur.execute("INSERT OR IGNORE INTO users(id) VALUES(?)", (user_id,))
+    db.commit()
+
+def accept_rules(user_id):
+    cur.execute("UPDATE users SET accepted=1 WHERE id=?", (user_id,))
+    db.commit()
+
+def check_rules(user_id):
+    cur.execute("SELECT accepted FROM users WHERE id=?", (user_id,))
+    data = cur.fetchone()
+    return data and data[0] == 1
+
+
+# ---------------- STATE ----------------
 user_state = {}
-
 
 # ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await add_user(user_id)
 
-    if not await is_accepted(user_id):
+    user = update.effective_user.id
+    add_user(user)
+
+    if not check_rules(user):
+
         btn = [[InlineKeyboardButton("✅ قبول قوانین", callback_data="accept")]]
+
         await update.message.reply_text(
-            "برای استفاده از ربات باید قوانین را بپذیرید.",
+            """
+📜 قوانین ربات:
+
+1- استفاده درست
+2- اسپم ممنوع
+3- محتوای غیرقانونی ممنوع
+4- احترام
+5- سوء استفاده ممنوع
+6- فایل خطرناک ممنوع
+7- سکه‌ها سیستم ربات
+8- دعوت واقعی
+9- رایگان
+10- قوانین ممکن است تغییر کند
+11- سازنده: امیر علی فروزان اصل
+""",
             reply_markup=InlineKeyboardMarkup(btn)
         )
         return
 
-    await menu(update)
+    await menu(update, context)
 
 
 # ---------------- MENU ----------------
-async def menu(update: Update):
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     buttons = [
         [InlineKeyboardButton("🎬 ساخت ویدیو", callback_data="video")],
-        [InlineKeyboardButton("🎵 ساخت موسیقی", callback_data="music")],
-        [InlineKeyboardButton("🗣 ساخت ویس", callback_data="voice")],
-        [InlineKeyboardButton("🪙 موجودی سکه", callback_data="coins")]
+        [InlineKeyboardButton("🎵 ساخت آهنگ", callback_data="music")],
+        [InlineKeyboardButton("🪙 سکه من", callback_data="coins")]
     ]
 
     await update.message.reply_text(
-        "یکی از گزینه‌های زیر را انتخاب کنید:",
+        "خوش آمدی 👋\nانتخاب کن:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
 
 # ---------------- CALLBACK ----------------
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     q = update.callback_query
     await q.answer()
-    uid = q.from_user.id
 
     if q.data == "accept":
-        await accept_rules(uid)
-        await q.edit_message_text("✅ قوانین با موفقیت پذیرفته شد.")
-        await menu_from_callback(q, context)
-        return
+        accept_rules(q.from_user.id)
+        await q.edit_message_text("✅ قوانین قبول شد")
+        await q.message.reply_text("بزن /start")
 
-    if q.data in ["video", "music", "voice"]:
-        user_state[uid] = q.data
+    elif q.data == "video":
+        user_state[q.from_user.id] = "video"
+        await q.edit_message_text("🎬 حالا متن ویدیو را بفرست")
 
-        if q.data == "video":
-            text = "🎬 حالا متن یا توضیح ویدیو را ارسال کنید."
-        elif q.data == "music":
-            text = "🎵 حالا متن یا توضیح موسیقی را ارسال کنید."
-        else:
-            text = "🗣 حالا متن موردنظر برای تولید ویس را ارسال کنید."
+    elif q.data == "music":
+        user_state[q.from_user.id] = "music"
+        await q.edit_message_text("🎵 حالا متن آهنگ را بفرست")
 
-        await q.edit_message_text(text)
-        return
-
-    if q.data == "coins":
-        coins = await get_coins(uid)
-        await q.edit_message_text(f"🪙 موجودی شما: {coins} سکه")
-        return
+    elif q.data == "coins":
+        cur.execute("SELECT coins FROM users WHERE id=?", (q.from_user.id,))
+        coins = cur.fetchone()[0]
+        await q.edit_message_text(f"🪙 موجودی شما: {coins}")
 
 
-async def menu_from_callback(q, context):
-    buttons = [
-        [InlineKeyboardButton("🎬 ساخت ویدیو", callback_data="video")],
-        [InlineKeyboardButton("🎵 ساخت موسیقی", callback_data="music")],
-        [InlineKeyboardButton("🗣 ساخت ویس", callback_data="voice")],
-        [InlineKeyboardButton("🪙 موجودی سکه", callback_data="coins")]
-    ]
+# ---------------- MESSAGE HANDLER ----------------
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    await q.message.reply_text(
-        "یکی از گزینه‌های زیر را انتخاب کنید:",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    user_id = update.effective_user.id
+    text = update.message.text
 
+    state = user_state.get(user_id)
 
-# ---------------- TEXT HANDLER ----------------
-async def text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    msg = update.message.text
-    state = user_state.get(uid)
+    if state == "video":
+        await update.message.reply_text("🎬 در حال ساخت ویدیو... (فعلاً خام)")
 
-    if state == "music":
-        await update.message.reply_text("⏳ در حال ساخت موسیقی...")
-        audio = await generate_music(msg)
-        await update.message.reply_document(audio)
-
-    elif state == "video":
-        await update.message.reply_text("⏳ در حال ساخت ویدیو...")
-        video = await generate_video(msg)
-        await update.message.reply_document(video)
-
-    elif state == "voice":
-        await update.message.reply_text("⏳ در حال ساخت ویس...")
-        voice = await generate_voice(msg)
-        await update.message.reply_document(voice)
+    elif state == "music":
+        await update.message.reply_text("🎵 در حال ساخت آهنگ... (فعلاً خام)")
 
     else:
-        await update.message.reply_text("لطفاً ابتدا یکی از گزینه‌های منو را انتخاب کنید.")
+        await update.message.reply_text("از /start استفاده کن")
 
 
-# ---------------- RUN ----------------
-async def main():
-    await create_db()
+# ---------------- RUN BOT ----------------
+app = Application.builder().token(BOT_TOKEN).build()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text))
-
-    await app.run_polling()
-
-
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+print("Bot Started")
+app.run_polling()
