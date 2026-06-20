@@ -1,5 +1,13 @@
+# ابتدا نسخه پایه و سازگار thinc و spacy را نصب می‌کنیم تا مشکل رفع شود
+thinc==8.3.0
+spacy==3.7.2
+
+# سپس سایر پیش‌نیازهای اصلی
+numpy
 python-telegram-bot
-TTS
+
+# نسخه سبک شده torch برای جلوگیری از کمبود RAM در Railway
 torch --index-url https://download.pytorch.org/whl/cpu
 
-numpy
+# در نهایت کتابخانه اصلی
+TTS
