@@ -1,158 +1,105 @@
-import os
 import uuid
 import asyncio
 import edge_tts
 
-from telegram import (
-    Update,
-    ReplyKeyboardMarkup,
-    KeyboardButton
-)
-
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    filters
+    Application, CommandHandler, MessageHandler,
+    ContextTypes, filters
 )
 
 import db
 
+TOKEN = "YOUR_BOT_TOKEN"
 
-# ================= TOKEN =================
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN")
-
-
-# ================= LANG =================
-LANG = "fa"
-
-
-# ================= KEYBOARD =================
+# ---------- KEYBOARD ----------
 def kb():
     return ReplyKeyboardMarkup([
-        ["👤 پروفایل", "💰 امتیاز"],
-        ["🎤 صدای مرد", "🎤 صدای زن"],
-        ["🔗 دعوت"]
+        ["👤 پروفایل", "🎤 ساخت صدا"],
+        ["💰 امتیاز", "🔗 دعوت"],
+        ["👨‍👩‍👧 صدا مرد", "👩 صدا زن"]
     ], resize_keyboard=True)
 
-
-# ================= RULES (10 LINES) =================
-RULES = """
-📜 قوانین استفاده از ربات:
-
-1. استفاده از ربات یعنی پذیرش قوانین  
-2. هر کاربر مسئول استفاده خود است  
-3. ثبت‌نام فقط با اطلاعات واقعی  
-4. سوءاستفاده باعث مسدودی می‌شود  
-5. ارسال اسپم ممنوع است  
-6. محتوای غیرمجاز حذف می‌شود  
-7. لینک دعوت معتبر است  
-8. امتیاز قابل سوءاستفاده نیست  
-9. سازنده: امیرعلی فروزان‌اصل (ساندرا)  
-10. استفاده یعنی پذیرش کامل قوانین
-"""
-
-
-# ================= START =================
+# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    u = update.effective_user
-    db.create_user(u.id, u.username, u.first_name)
+    user = update.effective_user
+    db.create_user(user.id, user.first_name)
 
-    user = db.get_user(u.id)
+    # invite system
+    if context.args:
+        inviter = int(context.args[0])
+        if inviter != user.id:
+            db.add_points(inviter, 200)
 
-    if user["accepted"] == 0:
-        await update.message.reply_text(RULES)
-        db.update("accepted", 1, u.id)
+    await update.message.reply_text(
+        "به ربات حرفه‌ای خوش آمدی 👋",
+        reply_markup=kb()
+    )
 
-    await update.message.reply_text("👋 خوش آمدید", reply_markup=kb())
-
-
-# ================= PROFILE =================
+# ---------- PROFILE ----------
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     u = db.get_user(update.effective_user.id)
 
-    await update.message.reply_text(f"""
+    text = f"""
 👤 پروفایل
+
 🆔 {u['user_id']}
-👤 {u['first_name']}
-🌍 {u['language']}
-⭐ {u['points']}
+👤 {u['name']}
+🎤 صدا: {u['voice']}
+⭐ امتیاز: {u['points']}
 
-👨‍💻 امیرعلی فروزان‌اصل (سازنده)
-""")
+👨‍💻 سازنده: امیرعلی فروزان‌اصل
+"""
 
+    await update.message.reply_text(text)
 
-# ================= POINTS =================
+# ---------- POINTS ----------
 async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
     u = db.get_user(update.effective_user.id)
-    await update.message.reply_text(f"⭐ امتیاز: {u['points']}")
+    await update.message.reply_text(f"⭐ امتیاز شما: {u['points']}")
 
-
-# ================= INVITE =================
+# ---------- INVITE ----------
 async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    bot = await context.bot.get_me()
-    uid = update.effective_user.id
 
-    link = f"https://t.me/{bot.username}?start={uid}"
+    link = f"https://t.me/YOUR_BOT?start={update.effective_user.id}"
 
-    await update.message.reply_text(f"🔗 لینک دعوت:\n{link}")
+    await update.message.reply_text(
+        f"🔗 لینک دعوت:\n{link}\n\n+200 امتیاز برای هر دعوت"
+    )
 
+# ---------- SET VOICE ----------
+async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db.set_voice(update.effective_user.id, "male")
+    await update.message.reply_text("👨 صدای مرد انتخاب شد")
 
-# ================= EDGE TTS =================
-async def make_voice(text, voice):
+async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    db.set_voice(update.effective_user.id, "female")
+    await update.message.reply_text("👩 صدای زن انتخاب شد")
+
+# ---------- TTS ----------
+async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    text = update.message.text
+    if text in ["🎤 ساخت صدا", "👤 پروفایل", "💰 امتیاز", "🔗 دعوت"]:
+        return
+
+    user = db.get_user(update.effective_user.id)
+
+    voice = "fa-IR-FaridNeural" if user["voice"] == "male" else "fa-IR-DilaraNeural"
 
     file = f"{uuid.uuid4()}.mp3"
 
     tts = edge_tts.Communicate(text, voice)
     await tts.save(file)
 
-    return file
-
-
-# ================= VOICE MALE =================
-async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    text = update.message.text
-
-    if text in ["🎤 صدای مرد", "🎤 صدای زن", "👤 پروفایل", "💰 امتیاز", "🔗 دعوت"]:
-        await update.message.reply_text("✍ متن را ارسال کن")
-        return
-
-    file = await make_voice(text, "fa-IR-FaridNeural")
-
     await update.message.reply_audio(audio=open(file, "rb"))
 
-    os.remove(file)
+    db.add_points(user["user_id"], 50)
 
-    db.add_points(update.effective_user.id, 50)
-
-
-# ================= VOICE FEMALE =================
-async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    text = update.message.text
-
-    if text in ["🎤 صدای مرد", "🎤 صدای زن", "👤 پروفایل", "💰 امتیاز", "🔗 دعوت"]:
-        await update.message.reply_text("✍ متن را ارسال کن")
-        return
-
-    file = await make_voice(text, "fa-IR-DilaraNeural")
-
-    await update.message.reply_audio(audio=open(file, "rb"))
-
-    os.remove(file)
-
-    db.add_points(update.effective_user.id, 50)
-
-
-# ================= MAIN =================
+# ---------- MAIN ----------
 def main():
-
-    db.init()
 
     app = Application.builder().token(TOKEN).build()
 
@@ -162,15 +109,13 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("💰 امتیاز"), points))
     app.add_handler(MessageHandler(filters.Regex("🔗 دعوت"), invite))
 
-    app.add_handler(MessageHandler(filters.Regex("🎤 صدای مرد"), male))
-    app.add_handler(MessageHandler(filters.Regex("🎤 صدای زن"), female))
+    app.add_handler(MessageHandler(filters.Regex("👨 صدا مرد"), male))
+    app.add_handler(MessageHandler(filters.Regex("👩 صدا زن"), female))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, male))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, female))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tts))
 
     print("Bot Running...")
     app.run_polling()
-
 
 if __name__ == "__main__":
     main()
