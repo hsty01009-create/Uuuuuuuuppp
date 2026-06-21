@@ -234,7 +234,6 @@ def profile_text(user):
 👥 دعوت: {user['invited_count']}
 🎁 کد دعوت: {user['referral_code']}
 """
-}
 # =========================
 # شروع ربات
 # =========================
