@@ -1,4 +1,3 @@
-python-telegram-bot==20.7
-gTTS
-pydub
-python-dotenv # برای مدیریت بهتر توکن ها در محیط محلی
+# requirements.txt
+python-telegram-bot==21.6
+gTTS==2.5.3
