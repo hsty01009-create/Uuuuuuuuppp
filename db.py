@@ -7,6 +7,7 @@ def conn():
     c.row_factory = sqlite3.Row
     return c
 
+
 def init():
     c = conn()
     cur = c.cursor()
@@ -18,12 +19,13 @@ def init():
         first_name TEXT,
         language TEXT DEFAULT 'fa',
         points INTEGER DEFAULT 0,
-        invited_count INTEGER DEFAULT 0
+        accepted INTEGER DEFAULT 0
     )
     """)
 
     c.commit()
     c.close()
+
 
 def create_user(user_id, username, first_name):
     c = conn()
@@ -38,11 +40,13 @@ def create_user(user_id, username, first_name):
     c.commit()
     c.close()
 
+
 def get_user(user_id):
     c = conn()
     cur = c.cursor()
     cur.execute("SELECT * FROM users WHERE user_id=?", (user_id,))
     return cur.fetchone()
+
 
 def update(field, value, user_id):
     c = conn()
@@ -51,11 +55,13 @@ def update(field, value, user_id):
     c.commit()
     c.close()
 
+
 def add_points(user_id, amount):
     c = conn()
     cur = c.cursor()
     cur.execute("UPDATE users SET points = points + ? WHERE user_id=?", (amount, user_id))
     c.commit()
     c.close()
+
 
 init()
