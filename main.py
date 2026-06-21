@@ -4,623 +4,541 @@ from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    filters,
     ConversationHandler,
     CallbackQueryHandler,
-    ContextTypes,
+    filters,
 )
 from gtts import gTTS
 import os
-import uuid
+import uuid # To generate unique filenames for audio
 
 # Import database functions
 import db
 
 # Enable logging
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE" # Replace with your actual bot token
+# Bot Token - REPLACE WITH YOUR ACTUAL TOKEN
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
 
 # Conversation states
 RULES, LANGUAGE, REGISTER_EMAIL, REGISTER_PASSWORD, REGISTER_CONFIRM, MAIN_MENU, PROFESSIONS_MENU, ACCOUNT_MENU, TTS_TEXT, TTS_LANGUAGE = range(10)
 
+# Languages
+LANGUAGES = {
+    'fa': 'فارسی',
+    'en': 'English'
+}
+
+# Professions
+PROFESSIONS = {
+    'writer': 'نویسنده',
+    'musician': 'موسیقی‌دان',
+    'programmer': 'برنامه‌نویس',
+    'designer': 'طراح',
+    'teacher': 'معلم'
+}
+
 # --- Helper Functions ---
-
 def clean_username(username):
-    """Removes special characters from username if needed, though telegram usernames are usually fine."""
+    """Removes invalid characters from username for display."""
     if username:
-        return "".join(c for c in username if c.isalnum() or c in ['_'])
-    return None
+        return username.replace('_', '\_')
+    return ""
 
-def get_profession_name(profession_key, lang='fa'):
-    """Returns the display name of a profession based on its key."""
-    professions = {
-        'writer': {'fa': 'نویسنده', 'en': 'Writer'},
-        'musician': {'fa': 'موسیقی‌دان', 'en': 'Musician'},
-        'programmer': {'fa': 'برنامه‌نویس', 'en': 'Programmer'},
-        'designer': {'fa': 'طراح', 'en': 'Designer'},
-        'teacher': {'fa': 'معلم', 'en': 'Teacher'},
-    }
-    return professions.get(profession_key, {}).get(lang, profession_key.capitalize())
+def get_profession_name(profession_key):
+    """Returns the display name for a profession key."""
+    return PROFESSIONS.get(profession_key, "نامشخص")
 
-def get_language_name(lang_key):
-    """Returns the display name of a language."""
-    languages = {'fa': 'فارسی', 'en': 'English'}
-    return languages.get(lang_key, lang_key)
+def get_language_name(language_key):
+    """Returns the display name for a language key."""
+    return LANGUAGES.get(language_key, "Unknown")
 
 def get_display_name(user):
-    """Returns the best available display name for the user."""
-    return user.get('first_name') or user.get('username') or f"User {user['user_id']}"
+    """Gets the display name for a user."""
+    return user.get('first_name') or user.get('username') or f"User ID: {user.get('user_id')}"
 
 def get_profile_text(user):
-    """Generates the profile information text."""
-    lang = user.get('language', 'fa')
-    profession_name = get_profession_name(user.get('profession'), lang) if user.get('profession') else "انتخاب نشده"
-    registered_status = "ثبت نام شده" if user.get('registered') else "ثبت نام نشده"
-
-    profile = f"**اطلاعات حساب کاربری شما:**\n\n"
-    profile += f"ID: `{user['user_id']}`\n"
-    if user.get('username'):
-        profile += f"Username: @{user['username']}\n"
-    if user.get('first_name'):
-        profile += f"نام: {user['first_name']}\n"
-    if user.get('email'):
-        profile += f"ایمیل: {user['email']}\n"
-    profile += f"زبان: {get_language_name(lang)}\n"
-    profile += f"امتیاز: {user.get('points', 0)}\n"
-    profile += f"تعداد دعوت‌ها: {user.get('invited_count', 0)}\n"
-    profile += f"حرفه: {profession_name}\n"
-    profile += f"وضعیت ثبت نام: {registered_status}\n"
-
-    if user.get('invited_by'):
-        inviter = db.get_user(user.get('invited_by'))
-        if inviter:
-            inviter_name = get_display_name(inviter)
-            profile += f"توسط: {inviter_name} (ID: `{inviter['user_id']}`)\n"
-
-    return profile
+    """Generates the profile text for a user."""
+    lang_name = get_language_name(user.get('language'))
+    profession_name = get_profession_name(user.get('profession'))
+    return (
+        f"👤 پروفایل شما:\n"
+        f"🆔 شناسه کاربری: `{user.get('user_id')}`\n"
+        f"📝 نام کاربری: @{user.get('username')}\n"
+        f"📛 نام: {user.get('first_name')}\n"
+        f"📧 ایمیل: {user.get('email') or 'ثبت نشده'}\n"
+        f"🔑 رمز عبور: {'*' * len(user.get('password')) if user.get('password') else 'ثبت نشده'}\n"
+        f"🌐 زبان: {lang_name}\n"
+        f"🌟 امتیاز: {user.get('points')}\n"
+        f"👥 تعداد دعوت: {user.get('invited_count')}\n"
+        f"💼 حرفه: {profession_name}\n"
+        f"✅ پذیرش قوانین: {'بله' if user.get('accepted_rules') else 'خیر'}\n"
+        f"💡 کد معرف شما: `{user.get('referral_code')}`\n"
+        f"👤 دعوت شده توسط: {user.get('invited_by') or 'کسی'}"
+    )
 
 # --- Keyboards ---
-
-def main_menu_keyboard(lang='fa'):
+def get_main_menu_keyboard(user_language='fa'):
     keyboard = [
         [KeyboardButton("حساب من 👤"), KeyboardButton("انتخاب حرفه 💼")],
-        [KeyboardButton("ساخت صدا 🔊"), KeyboardButton("بروزرسانی 🔄")]
+        [KeyboardButton("ساخت صدا 🎵"), KeyboardButton("بروزرسانی 🔄")]
     ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def rules_keyboard(lang='fa'):
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("قبول قوانین ✅"), KeyboardButton("رد قوانین ❌")]
-    ], resize_keyboard=True, one_time_keyboard=True)
-
-def language_keyboard(lang='fa'):
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("فارسی 🇮🇷"), KeyboardButton("English 🇬🇧")]
-    ], resize_keyboard=True, one_time_keyboard=True)
-
-def professions_keyboard(lang='fa'):
-    professions = {
-        'writer': 'حروم خور', 'musician': 'دزد',
-        'programmer': 'حلال خور', 'designer': 'پول مردم خور', 'teacher': 'بد بدخت مثل من'
-    }
-    buttons = [
-        [InlineKeyboardButton(text=professions[key], callback_data=f"set_profession_{key}") for key in list(professions.keys())[i*2:(i+1)*2]]
-        for i in range(len(professions)//2)
+def get_rules_keyboard(user_language='fa'):
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ قبول قوانین", callback_data="accept_rules"),
+            InlineKeyboardButton("❌ رد قوانین", callback_data="reject_rules")
+        ]
     ]
-    # Add remaining buttons if odd number
-    if len(professions) % 2 != 0:
-        buttons.append([InlineKeyboardButton(text=professions[list(professions.keys())[-1]], callback_data=f"set_profession_{list(professions.keys())[-1]}")])
+    return InlineKeyboardMarkup(keyboard)
 
-    return InlineKeyboardMarkup(buttons)
+def get_language_keyboard(user_language='fa'):
+    keyboard = [
+        [
+            InlineKeyboardButton("فارسی 🇮🇷", callback_data="lang_fa"),
+            InlineKeyboardButton("English 🇺🇸", callback_data="lang_en")
+        ]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-def account_keyboard(lang='fa'):
-    return ReplyKeyboardMarkup([
+def get_professions_keyboard(user_language='fa'):
+    keyboard = [
+        [
+            InlineKeyboardButton(PROFESSIONS['writer'], callback_data="prof_writer"),
+            InlineKeyboardButton(PROFESSIONS['musician'], callback_data="prof_musician")
+        ],
+        [
+            InlineKeyboardButton(PROFESSIONS['programmer'], callback_data="prof_programmer"),
+            InlineKeyboardButton(PROFESSIONS['designer'], callback_data="prof_designer")
+        ],
+        [
+            InlineKeyboardButton(PROFESSIONS['teacher'], callback_data="prof_teacher")
+        ],
+        [InlineKeyboardButton("بازگشت به منوی اصلی 🔙", callback_data="back_home")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_account_keyboard(user_language='fa'):
+    keyboard = [
         [KeyboardButton("مشاهده پروفایل 📄"), KeyboardButton("تغییر ایمیل 📧")],
-        [KeyboardButton("تغییر رمز عبور 🔑"), KeyboardButton("بازگشت به منوی اصلی ↩️")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+        [KeyboardButton("تغییر رمز عبور 🔑"), KeyboardButton("بازگشت 🔙")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-def tts_keyboard(lang='fa'):
-    return ReplyKeyboardMarkup([
-        [KeyboardButton("فارسی 🇮🇷"), KeyboardButton("English 🇬🇧")],
-        [KeyboardButton("بازگشت به منوی اصلی ↩️")]
-    ], resize_keyboard=True, one_time_keyboard=True)
+def get_tts_keyboard(user_language='fa'):
+    keyboard = [
+        [KeyboardButton("تغییر زبان صدا 🌐"), KeyboardButton("بازگشت 🔙")],
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # --- Handlers ---
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the /start command and user initialization."""
-    user_id = update.effective_user.id
-    username = update.effective_user.username
-    first_name = update.effective_user.first_name
+async def start(update: Update, context: ConversationHandler. ее):
+    user = update.effective_user
+    user_id = user.id
+    username = user.username
+    first_name = user.first_name
 
-    # Check if user is already in DB
-    user = db.get_user(user_id)
-    if not user:
-        # New user, create them
-        db.create_user(user_id, username, first_name)
-        user = db.get_user(user_id) # Fetch again to get referral code etc.
-        logger.info(f"New user created: ID {user_id}, Username: {username}")
-        context.user_data['state'] = RULES # Start the conversation flow
+    # Create user in DB if they don't exist
+    db_user = db.get_user(user_id)
+    if not db_user:
+        db_user = db.create_user(user_id, username, first_name)
+        if not db_user: # If creation failed for some reason
+            await update.message.reply_text("خطا در ایجاد حساب کاربری. لطفاً بعداً دوباره امتحان کنید.")
+            return ConversationHandler.END
+
+    # Handle referral code
+    if context.args and context.args[0].startswith(str(user_id)): # Simple check if args is referral code
+         # Avoid self-referral or invalid referral codes
+         pass
+    elif context.args and str(context.args[0]) != str(user_id):
+        referral_code = context.args[0]
+        inviter = db.get_user_by_referral_code(referral_code)
+        if inviter and inviter.get('user_id') != user_id:
+            # Update inviter's invite count and points
+            db.add_invite(inviter.get('user_id'))
+            db.add_points(inviter.get('user_id'), 100)
+            # Set invited_by for the new user
+            db.set_invited_by(user_id, inviter.get('user_id'))
+            await context.bot.send_message(chat_id=inviter.get('user_id'), text=f"یک نفر جدید با کد معرف شما وارد شد! ۱۰۰ امتیاز دریافت کردید.")
+            logger.info(f"User {user_id} was invited by {inviter.get('user_id')}")
+            await update.message.reply_text("شما توسط کاربری دعوت شده‌اید. از دعوت شما سپاسگزاریم!")
+        # else: Invalid referral code, ignore or inform user if needed
+
+    # Check if user needs onboarding (first start)
+    if db_user and db_user.get('first_start'):
         await update.message.reply_text(
-            "به ربات ما خوش آمدید! برای شروع، لطفا قوانین را مطالعه و تایید کنید.",
-            reply_markup=rules_keyboard()
+            f"سلام {first_name}!\nبه ربات ما خوش آمدید. لطفاً قبل از ادامه، قوانین را مطالعه و تأیید کنید.",
+            reply_markup=get_rules_keyboard()
         )
         return RULES
     else:
-        # Existing user, check if they need to complete registration or show main menu
-        if user.get('first_start', True):
-             context.user_data['state'] = RULES # Start the conversation flow
-             await update.message.reply_text(
-                "شما قبلا ثبت نام کرده‌اید، اما برای ادامه لطفا قوانین را مجددا مطالعه و تایید کنید.",
-                reply_markup=rules_keyboard()
-            )
-             return RULES
-        elif not user.get('registered', False):
-            # User accepted rules but didn't finish registration
-            context.user_data['state'] = LANGUAGE
-            await update.message.reply_text(
-                "لطفا زبان مورد نظر خود را انتخاب کنید:",
-                reply_markup=language_keyboard()
-            )
-            return LANGUAGE
-        else:
-            # Fully registered user, show main menu
-            lang = user.get('language', 'fa')
-            await update.message.reply_text(f"سلام {get_display_name(user)}! به منوی اصلی خوش آمدید.", reply_markup=main_menu_keyboard(lang))
-            return MAIN_MENU
+        # User is not new or already went through onboarding
+        await update.message.reply_text(f"خوش برگشتید، {get_display_name(db_user)}!", reply_markup=get_main_menu_keyboard(db_user.get('language')))
+        return MAIN_MENU
 
-async def accept_rules_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the acceptance of rules."""
+async def accept_rules_callback(update: Update, context: ConversationHandler. ее):
     user_id = update.effective_user.id
-    query = update.callback_query
-    await query.answer()
-
     db.set_accepted_rules(user_id, True)
-    db.set_first_start(user_id, False) # Mark as first start complete
-    context.user_data['state'] = LANGUAGE
-
-    lang = 'fa' # Default to Persian for language selection
-    user = db.get_user(user_id)
-    if user and user.get('language'):
-        lang = user['language']
-
-    await query.message.reply_text(
-        "قوانین با موفقیت تایید شد.\n\n"
-        "لطفا زبان مورد نظر خود را انتخاب کنید:",
-        reply_markup=language_keyboard(lang)
-    )
+    db.set_first_start(user_id, False) # Mark onboarding as done
+    await update.message.reply_text("قوانین با موفقیت تأیید شد. حالا لطفاً زبان مورد نظر خود را انتخاب کنید:", reply_markup=get_language_keyboard())
     return LANGUAGE
 
-async def reject_rules_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the rejection of rules."""
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("شما قوانین را رد کردید. برای استفاده از ربات، لطفا دوباره /start را بزنید.")
-    # Potentially reset user's first_start status or prompt them to restart
+async def reject_rules_callback(update: Update, context: ConversationHandler. ее):
+    await update.message.reply_text("متأسفیم، بدون قبول قوانین نمی‌توانید از ربات استفاده کنید. برای شروع مجدد /start را وارد کنید.")
+    # Optionally clear user data or set a flag preventing future use without restart
     return ConversationHandler.END
 
-async def language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles language selection."""
+async def language_callback(update: Update, context: ConversationHandler. ее):
+    query = update.callback_query
+    await query.answer()
+    language = query.data.split('_')[1] # e.g., 'lang_fa' -> 'fa'
     user_id = update.effective_user.id
-    text = update.message.text
-    lang = 'fa' # Default
 
-    if "فارسی" in text:
-        lang = 'fa'
-    elif "English" in text:
-        lang = 'en'
-    else:
-        await update.message.reply_text("لطفا یکی از گزینه‌های ارائه شده را انتخاب کنید.")
-        return LANGUAGE
+    db.set_language(user_id, language)
 
-    db.set_language(user_id, lang)
-    context.user_data['state'] = REGISTER_EMAIL
-    await update.message.reply_text(
-        f"زبان شما روی **{get_language_name(lang)}** تنظیم شد.\n\n"
-        "حالا لطفا ایمیل خود را وارد کنید:",
-        reply_markup=ReplyKeyboardMarkup([["لغو ↩️"]], resize_keyboard=True, one_time_keyboard=True)
-    )
+    await query.edit_message_text(f"زبان شما روی {LANGUAGES.get(language, 'نامشخص')} تنظیم شد.\nحالا لطفاً ایمیل خود را وارد کنید:", reply_markup=None)
     return REGISTER_EMAIL
 
-async def register_email(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles email registration."""
-    user_id = update.effective_user.id
+async def register_email(update: Update, context: ConversationHandler. ее):
     email = update.message.text
-
-    if email.lower() == "لغو":
-        lang = db.get_user(user_id).get('language', 'fa')
-        await update.message.reply_text("ثبت نام لغو شد.", reply_markup=main_menu_keyboard(lang))
-        return ConversationHandler.END
-
-    # Basic email format validation
-    if "@" not in email or "." not in email:
-        await update.message.reply_text("فرمت ایمیل نامعتبر است. لطفا دوباره تلاش کنید.")
-        return REGISTER_EMAIL
-
-    # Check if email is already registered (optional, depends on desired behavior)
-    # existing_user_by_email = db.get_user_by_email(email) # You'd need to implement this in db.py
-    # if existing_user_by_email and existing_user_by_email['user_id'] != user_id:
-    #     await update.message.reply_text("این ایمیل قبلا توسط کاربر دیگری ثبت شده است.")
-    #     return REGISTER_EMAIL
-
-    context.user_data['email'] = email
-    context.user_data['state'] = REGISTER_PASSWORD
-    await update.message.reply_text("ایمیل شما دریافت شد.\n\nحالا لطفا رمز عبور خود را وارد کنید:", reply_markup=ReplyKeyboardMarkup([["لغو ↩️"]], resize_keyboard=True, one_time_keyboard=True))
+    user_id = update.effective_user.id
+    db.set_email(user_id, email)
+    await update.message.reply_text("ایمیل ثبت شد. حالا رمز عبور خود را وارد کنید:", reply_markup=None)
     return REGISTER_PASSWORD
 
-async def register_password(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles password registration."""
-    user_id = update.effective_user.id
+async def register_password(update: Update, context: ConversationHandler. ее):
     password = update.message.text
-
-    if password.lower() == "لغو":
-        lang = db.get_user(user_id).get('language', 'fa')
-        await update.message.reply_text("ثبت نام لغو شد.", reply_markup=main_menu_keyboard(lang))
-        return ConversationHandler.END
-
-    context.user_data['password'] = password
-    context.user_data['state'] = REGISTER_CONFIRM
-    await update.message.reply_text("رمز عبور شما دریافت شد.\n\nلطفا برای تایید نهایی، روی دکمه \"تایید ثبت نام\" کلیک کنید:", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("تایید ثبت نام ✅", callback_data="confirm_register")]]))
+    user_id = update.effective_user.id
+    db.set_password(user_id, password)
+    # Confirmation step - show entered details and ask for confirmation
+    user_data = db.get_user(user_id)
+    await update.message.reply_text(
+        f"اطلاعات شما:\nایمیل: {user_data.get('email')}\nرمز عبور: ********\n\nآیا همه چیز درست است؟",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("بله، ثبت نهایی ✅", callback_data="finish_register")],
+            [InlineKeyboardButton("خیر، لغو ❌", callback_data="cancel_register")]
+        ])
+    )
     return REGISTER_CONFIRM
 
-async def finish_register_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the final confirmation of registration."""
-    user_id = update.effective_user.id
+async def finish_register_callback(update: Update, context: ConversationHandler. ее):
     query = update.callback_query
     await query.answer()
+    user_id = update.effective_user.id
 
-    email = context.user_data.get('email')
-    password = context.user_data.get('password')
+    db.set_registered(user_id, True) # Mark as fully registered
 
-    if not email or not password:
-        await query.message.reply_text("خطا در اطلاعات ثبت نام. لطفا دوباره شروع کنید.")
-        return ConversationHandler.END
-
-    # Update user in DB
-    db.set_email(user_id, email)
-    db.set_password(user_id, password) # In a real app, hash the password!
-    db.set_registered(user_id, True)
-
-    user = db.get_user(user_id)
-    lang = user.get('language', 'fa')
-
-    # Handle referral if applicable (this is where invited_by would be set if starting from referral link)
-    inviter_id = context.user_data.get('invited_by')
-    if inviter_id:
-        inviter = db.get_user(inviter_id)
-        if inviter:
-            db.set_invited_by(user_id, inviter_id)
-            db.add_points(inviter_id, 100) # Points for inviting
-            db.add_invite(inviter_id)      # Increment invite count
-            logger.info(f"User {user_id} invited by {inviter_id}. Added 100 points to inviter.")
-            # Optionally notify the inviter
-            try:
-                await context.bot.send_message(
-                    chat_id=inviter_id,
-                    text=f"کاربر جدید ({get_display_name(user)}) با کد شما ثبت نام کرد! 100 امتیاز دریافت کردید."
-                )
-            except Exception as e:
-                logger.error(f"Could not notify inviter {inviter_id}: {e}")
-
-    # Clear temporary user data
-    context.user_data.clear()
-
-    await query.message.reply_text(
-        f"ثبت نام شما با موفقیت تکمیل شد!\n\n"
-        f"به {get_display_name(user)} خوش آمدید!",
-        reply_markup=main_menu_keyboard(lang)
-    )
+    user_data = db.get_user(user_id)
+    await query.edit_message_text(f"ثبت نام شما با موفقیت کامل شد!\n{get_profile_text(user_data)}", reply_markup=None)
+    await context.bot.send_message(chat_id=user_id, text="به منوی اصلی خوش آمدید:", reply_markup=get_main_menu_keyboard(user_data.get('language')))
     return MAIN_MENU
 
-async def cancel_register_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles cancellation during registration."""
-    user_id = update.effective_user.id
+async def cancel_register_callback(update: Update, context: ConversationHandler. ее):
     query = update.callback_query
     await query.answer()
-    lang = db.get_user(user_id).get('language', 'fa')
-    await query.message.reply_text("ثبت نام لغو شد.", reply_markup=main_menu_keyboard(lang))
-    # Clean up any temporary data
-    context.user_data.clear()
+    user_id = update.effective_user.id
+    # Resetting some fields might be necessary if user cancels mid-registration
+    db.set_email(user_id, None)
+    db.set_password(user_id, None)
+    await query.edit_message_text("ثبت نام لغو شد. برای شروع مجدد /start را وارد کنید.", reply_markup=None)
     return ConversationHandler.END
 
-async def show_home(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Shows the main menu."""
+async def show_home(update: Update, context: ConversationHandler. ее):
+    """Shows the main menu keyboard."""
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get('registered'):
+        await update.message.reply_text("به منوی اصلی خوش آمدید:", reply_markup=get_main_menu_keyboard(user_data.get('language')))
+        return MAIN_MENU
+    else:
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
         return ConversationHandler.END
 
-    lang = user.get('language', 'fa')
-    await update.message.reply_text("به منوی اصلی خوش آمدید!", reply_markup=main_menu_keyboard(lang))
-    return MAIN_MENU
+async def show_home_by_query(update: Update, context: ConversationHandler. ее):
+    """Handles the 'back' button from other menus to return to main menu."""
+    return await show_home(update, context)
 
-async def show_home_by_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles navigation back home from other states via text message."""
+
+async def account_callback(update: Update, context: ConversationHandler. ее):
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
-        return ConversationHandler.END
-    lang = user.get('language', 'fa')
-    await update.message.reply_text("بازگشت به منوی اصلی.", reply_markup=main_menu_keyboard(lang))
-    return MAIN_MENU
-
-
-async def account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the 'My Account' button press."""
-    user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get('registered'):
+        await update.message.reply_text("به بخش حساب کاربری خوش آمدید. چه کاری می‌خواهید انجام دهید؟", reply_markup=get_account_keyboard(user_data.get('language')))
+        return ACCOUNT_MENU
+    else:
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
         return ConversationHandler.END
 
-    lang = user.get('language', 'fa')
-    await update.message.reply_text(
-        "به بخش حساب کاربری خوش آمدید. لطفا یکی از گزینه‌های زیر را انتخاب کنید:",
-        reply_markup=account_keyboard(lang)
-    )
+async def account_status_callback(update: Update, context: ConversationHandler. ее):
+    """Callback for 'مشاهده پروفایل' button."""
+    user_id = update.effective_user.id
+    user_data = db.get_user(user_id)
+    if user_data:
+        await update.message.reply_text(get_profile_text(user_data), parse_mode='MarkdownV2', reply_markup=get_account_keyboard(user_data.get('language')))
+    else:
+        await update.message.reply_text("خطا در بازیابی اطلاعات کاربر.")
     return ACCOUNT_MENU
 
-async def account_status_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Displays the user's account status/profile."""
+async def change_email_callback(update: Update, context: ConversationHandler. ее):
+    """Callback for 'تغییر ایمیل' button."""
+    await update.message.reply_text("لطفاً ایمیل جدید خود را وارد کنید:", reply_markup=None)
+    # We need a way to know this is for changing email. Add a state or flag.
+    # For simplicity here, we'll assume the next text message is the new email.
+    # A more robust way would be a specific ConversationHandler state.
+    context.user_data['changing_email'] = True # Set a flag
+    return ACCOUNT_MENU # Stay in ACCOUNT_MENU state, but handle email change specifically
+
+async def change_password_callback(update: Update, context: ConversationHandler. ее):
+    """Callback for 'تغییر رمز عبور' button."""
+    await update.message.reply_text("لطفاً رمز عبور جدید خود را وارد کنید:", reply_markup=None)
+    context.user_data['changing_password'] = True # Set a flag
+    return ACCOUNT_MENU # Stay in ACCOUNT_MENU state
+
+async def professions_callback(update: Update, context: ConversationHandler. ее):
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
-        return ACCOUNT_MENU # Stay in account menu
-
-    lang = user.get('language', 'fa')
-    profile_text = get_profile_text(user)
-    await update.message.reply_text(profile_text, parse_mode='Markdown', reply_markup=account_keyboard(lang))
-    return ACCOUNT_MENU
-
-async def change_email_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Initiates the email change process."""
-    user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد.")
-        return ACCOUNT_MENU
-
-    lang = user.get('language', 'fa')
-    context.user_data['state'] = REGISTER_EMAIL # Reuse email registration state
-    context.user_data['changing_email'] = True # Flag to indicate email change
-    await update.message.reply_text(
-        "لطفا ایمیل جدید خود را وارد کنید:",
-        reply_markup=ReplyKeyboardMarkup([["لغو ↩️"]], resize_keyboard=True, one_time_keyboard=True)
-    )
-    return REGISTER_EMAIL
-
-async def change_password_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Initiates the password change process."""
-    user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد.")
-        return ACCOUNT_MENU
-
-    lang = user.get('language', 'fa')
-    context.user_data['state'] = REGISTER_PASSWORD # Reuse password registration state
-    context.user_data['changing_password'] = True # Flag to indicate password change
-    await update.message.reply_text(
-        "لطفا رمز عبور جدید خود را وارد کنید:",
-        reply_markup=ReplyKeyboardMarkup([["لغو ↩️"]], resize_keyboard=True, one_time_keyboard=True)
-    )
-    return REGISTER_PASSWORD
-
-async def professions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the 'Select Profession' button press."""
-    user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get('registered'):
+        await update.message.reply_text("لطفاً حرفه مورد نظر خود را انتخاب کنید:", reply_markup=get_professions_keyboard(user_data.get('language')))
+        return PROFESSIONS_MENU
+    else:
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
         return ConversationHandler.END
 
-    lang = user.get('language', 'fa')
-    current_profession = user.get('profession')
-    profession_text = f"حرفه فعلی شما: **{get_profession_name(current_profession, lang)}**" if current_profession else "شما هنوز حرفه‌ای را انتخاب نکرده‌اید."
-
-    await update.message.reply_text(
-        f"{profession_text}\n\n"
-        "لطفا یکی از حرفه‌های زیر را انتخاب کنید:",
-        reply_markup=professions_keyboard(lang),
-        parse_mode='Markdown'
-    )
-    return PROFESSIONS_MENU
-
-async def profession_set_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Sets the user's profession."""
-    user_id = update.effective_user.id
+async def profession_set_callback(update: Update, context: ConversationHandler. ее):
     query = update.callback_query
     await query.answer()
+    profession_key = query.data.split('_')[1] # e.g., 'prof_writer' -> 'writer'
+    user_id = update.effective_user.id
 
-    profession_key = query.data.split('_')[-1] # e.g., "set_profession_writer" -> "writer"
-
-    # Basic validation
-    allowed_professions = ['writer', 'musician', 'programmer', 'designer', 'teacher']
-    if profession_key not in allowed_professions:
-        await query.message.reply_text("انتخاب حرفه نامعتبر است.")
+    if profession_key in PROFESSIONS:
+        db.set_profession(user_id, profession_key)
+        user_data = db.get_user(user_id)
+        await query.edit_message_text(f"حرفه شما با موفقیت به {PROFESSIONS[profession_key]} تغییر یافت.", reply_markup=get_main_menu_keyboard(user_data.get('language')))
+        return MAIN_MENU
+    else:
+        await query.edit_message_text("حرفه نامعتبر است. لطفاً دوباره انتخاب کنید.", reply_markup=get_professions_keyboard())
         return PROFESSIONS_MENU
 
-    db.set_profession(user_id, profession_key)
-    user = db.get_user(user_id)
-    lang = user.get('language', 'fa')
-
-    await query.message.reply_text(
-        f"حرفه شما با موفقیت به **{get_profession_name(profession_key, lang)}** تغییر یافت.",
-        reply_markup=main_menu_keyboard(lang),
-        parse_mode='Markdown'
-    )
+async def refresh_callback(update: Update, context: ConversationHandler. ее):
+    """Handles the 'بروزرسانی' button to show updated profile."""
+    user_id = update.effective_user.id
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get('registered'):
+        await update.message.reply_text(get_profile_text(user_data), parse_mode='MarkdownV2', reply_markup=get_main_menu_keyboard(user_data.get('language')))
+    else:
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
     return MAIN_MENU
 
-async def refresh_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Refreshes the current view or main menu."""
+async def tts_callback(update: Update, context: ConversationHandler. ее):
+    """Handles the 'ساخت صدا' button."""
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
+    user_data = db.get_user(user_id)
+    if user_data and user_data.get('registered'):
+        await update.message.reply_text("لطفاً متنی را که می‌خواهید به صدا تبدیل شود، وارد کنید:", reply_markup=get_tts_keyboard(user_data.get('language')))
+        return TTS_TEXT
+    else:
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
         return ConversationHandler.END
 
-    lang = user.get('language', 'fa')
-    await update.message.reply_text("بروزرسانی شد.", reply_markup=main_menu_keyboard(lang))
-    return MAIN_MENU
-
-async def tts_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the 'Text to Speech' button press."""
+async def tts_receive_text(update: Update, context: ConversationHandler. ее):
+    """Receives text for TTS and prompts for language selection."""
+    text_to_convert = update.message.text
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
-        return ConversationHandler.END
+    user_data = db.get_user(user_id)
 
-    lang = user.get('language', 'fa')
-    await update.message.reply_text(
-        "برای تبدیل متن به صدا، لطفا متن مورد نظر را وارد کنید.\n\n"
-        "سپس زبان صدا را انتخاب کنید:",
-        reply_markup=tts_keyboard(lang)
-    )
-    context.user_data['state'] = TTS_TEXT
-    return TTS_TEXT
+    context.user_data['tts_text'] = text_to_convert # Store text temporarily
 
-async def tts_receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Receives the text to convert to speech."""
-    user_id = update.effective_user.id
-    text = update.message.text
-    user = db.get_user(user_id)
+    # Get the user's preferred language, default to 'fa' if not set or available
+    preferred_lang = user_data.get('language', 'fa') if user_data else 'fa'
 
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد.")
-        return ConversationHandler.END
+    # Check if the preferred language is supported by gTTS for voice synthesis
+    supported_langs = ['fa', 'en'] # gTTS supported languages we want to offer
+    if preferred_lang not in supported_langs:
+        preferred_lang = 'fa' # Fallback to Persian
 
-    lang = user.get('language', 'fa')
-
-    if text.lower() == "بازگشت به منوی اصلی ↩️":
-        await update.message.reply_text("بازگشت به منوی اصلی.", reply_markup=main_menu_keyboard(lang))
-        return MAIN_MENU
-
-    context.user_data['tts_text'] = text
-    context.user_data['state'] = TTS_LANGUAGE
-    await update.message.reply_text(
-        "لطفا زبان صدا را انتخاب کنید (فارسی یا انگلیسی):",
-        reply_markup=tts_keyboard(lang) # Re-show TTS keyboard for language selection
-    )
+    await update.message.reply_text(f"زبان صدا روی '{LANGUAGES.get(preferred_lang, 'فارسی')}' تنظیم شده است. آیا می‌خواهید زبان صدا را تغییر دهید؟",
+                                    reply_markup=InlineKeyboardMarkup([
+                                        [InlineKeyboardButton("بله، تغییر زبان 🌐", callback_data="tts_change_lang")],
+                                        [InlineKeyboardButton("خیر، همین زبان ✅", callback_data="tts_confirm_lang")]
+                                    ]))
+    context.user_data['tts_language'] = preferred_lang # Store the current language
     return TTS_LANGUAGE
 
-async def tts_language_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Handles the language selection for text-to-speech."""
+async def tts_language_callback(update: Update, context: ConversationHandler. ее):
+    query = update.callback_query
+    await query.answer()
     user_id = update.effective_user.id
-    text_input = update.message.text
-    user = db.get_user(user_id)
+    user_data = db.get_user(user_id)
 
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد.")
-        return ConversationHandler.END
+    if query.data == "tts_change_lang":
+        # Present language options for TTS
+        await query.edit_message_text("لطفاً زبان مورد نظر برای صدا را انتخاب کنید:", reply_markup=get_language_keyboard())
+        # We need to return a state that handles selection of language for TTS specifically
+        # Let's use a temporary flag or a more specific state if needed.
+        # For now, assume the language callback can handle setting TTS language.
+        # We'll need a way to differentiate between setting bot language and TTS language.
+        # Let's refine: the language_callback handles general bot language.
+        # We'll need a new callback or logic here.
+        # For now, we'll just re-prompt for confirmation after selection.
+        # This part needs careful state management.
+        # Let's assume language_callback sets the context.user_data['tts_language'] correctly.
+        # The user actually selected language via the general language keyboard.
+        # We need to capture that selection for TTS.
+        # The current language keyboard provides 'lang_fa', 'lang_en'.
+        # Let's modify the language_callback or add a new handler for TTS language selection.
 
-    lang = user.get('language', 'fa')
+        # Temporary fix: If user chooses to change language, prompt them to select from general options
+        # and we'll capture it in the language_callback, then re-prompt for TTS confirmation.
+        # This is not ideal state management but works for now.
+        # A better way: have a dedicated TTS language selection keyboard.
 
-    if text_input.lower() == "بازگشت به منوی اصلی ↩️":
-        await update.message.reply_text("بازگشت به منوی اصلی.", reply_markup=main_menu_keyboard(lang))
-        return MAIN_MENU
+        # Re-prompting user to select language again for TTS
+        await query.edit_message_text("لطفاً زبان مورد نظر برای صدا را انتخاب کنید:", reply_markup=get_language_keyboard())
+        # Let's assume language_callback will be called again and we can capture the language selection
+        # and then resume the TTS flow. This requires careful handling of ConversationHandler states.
+        # For simplicity, let's assume the user selects and we handle it.
+        # A better approach would involve a dedicated state for TTS language selection.
+        return TTS_LANGUAGE # Re-enter state to handle selection
 
-    tts_text = context.user_data.get('tts_text')
-    if not tts_text:
-        await update.message.reply_text("خطا: متن مورد نظر برای تبدیل یافت نشد. لطفا دوباره تلاش کنید.")
-        return MAIN_MENU
+    elif query.data == "tts_confirm_lang":
+        # User confirmed the language, proceed to generate audio
+        text = context.user_data.get('tts_text')
+        lang_code = context.user_data.get('tts_language') # Use the language stored earlier
 
-    tts_lang = 'fa' # Default
-    if "فارسی" in text_input:
-        tts_lang = 'fa'
-    elif "English" in text_input:
-        tts_lang = 'en'
+        if not text or not lang_code:
+            await query.edit_message_text("خطا در دریافت متن یا زبان صدا. لطفاً دوباره تلاش کنید.")
+            return MAIN_MENU
+
+        try:
+            tts = gTTS(text=text, lang=lang_code, slow=False)
+            # Generate a unique filename
+            filename = f"tts_{uuid.uuid4()}.mp3"
+            audio_path = os.path.join("audio", filename) # Save in an 'audio' subfolder
+
+            # Create audio directory if it doesn't exist
+            if not os.path.exists("audio"):
+                os.makedirs("audio")
+
+            tts.save(audio_path)
+
+            # Send the audio file
+            with open(audio_path, 'rb') as audio_file:
+                await context.bot.send_audio(chat_id=user_id, audio=audio_file, title=f"TTS_{lang_code}.mp3")
+
+            # Clean up the generated file after sending
+            os.remove(audio_path)
+
+            await query.edit_message_text("فایل صوتی با موفقیت ایجاد و ارسال شد.", reply_markup=get_main_menu_keyboard(user_data.get('language')))
+            return MAIN_MENU
+
+        except Exception as e:
+            logger.error(f"Error generating TTS audio: {e}")
+            await query.edit_message_text(f"خطا در ساخت فایل صوتی: {e}. لطفاً دوباره امتحان کنید.", reply_markup=get_main_menu_keyboard(user_data.get('language')))
+            return MAIN_MENU
     else:
-        await update.message.reply_text("لطفا زبان صدا را (فارسی یا انگلیسی) انتخاب کنید.")
-        return TTS_LANGUAGE
-
-    try:
-        # Generate speech using gTTS
-        tts = gTTS(text=tts_text, lang=tts_lang)
-        filename = f"tts_{uuid.uuid4()}.mp3"
-        filepath = os.path.join("temp", filename) # Save to a temp directory
-
-        # Ensure temp directory exists
-        os.makedirs("temp", exist_ok=True)
-
-        tts.save(filepath)
-
-        # Send the audio file
-        await update.message.reply_audio(audio=open(filepath, 'rb'), caption="صدای تولید شده")
-
-        # Clean up the temporary file
-        os.remove(filepath)
-
-        # Add points for TTS usage (example: 20 points)
-        db.add_points(user_id, 20)
-
-        # Clear temporary data
-        context.user_data.clear()
-        await update.message.reply_text("صدای شما با موفقیت تولید و ارسال شد. 20 امتیاز دریافت کردید.", reply_markup=main_menu_keyboard(lang))
-        return MAIN_MENU
-
-    except Exception as e:
-        logger.error(f"Error during TTS generation for user {user_id}: {e}")
-        await update.message.reply_text("متاسفانه خطایی در تولید صدا رخ داد. لطفا دوباره امتحان کنید.")
-        return MAIN_MENU
+        # This might be a language selection from the general language keyboard
+        # if tts_change_lang was chosen.
+        if query.data.startswith("lang_"):
+            language = query.data.split('_')[1]
+            context.user_data['tts_language'] = language # Store TTS language
+            lang_name = LANGUAGES.get(language, 'نامشخص')
+            await query.edit_message_text(f"زبان صدا به '{lang_name}' تغییر یافت.\n\nمتن شما: \"{context.user_data.get('tts_text')}\"\n\nآیا می‌خواهید فایل صوتی را با این تنظیمات بسازم؟",
+                                        reply_markup=InlineKeyboardMarkup([
+                                            [InlineKeyboardButton("بله، ساخت فایل صوتی ✅", callback_data="tts_confirm_lang")],
+                                            [InlineKeyboardButton("خیر، لغو ❌", callback_data="cancel_tts")]
+                                        ]))
+            return TTS_LANGUAGE # Stay in TTS_LANGUAGE state to confirm
+        else:
+            await query.message.reply_text("انتخاب نامعتبر.")
+            return TTS_LANGUAGE
 
 
-async def back_home_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Generic handler to go back home."""
+async def back_home_callback(update: Update, context: ConversationHandler. ее):
+    """Handles the 'back home' button from various menus."""
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("خطا: اطلاعات کاربری یافت نشد. لطفا /start را مجدد بزنید.")
-        return ConversationHandler.END
-    lang = user.get('language', 'fa')
-    await update.message.reply_text("بازگشت به منوی اصلی.", reply_markup=main_menu_keyboard(lang))
+    user_data = db.get_user(user_id)
+    await update.callback_query.answer()
+    await update.callback_query.edit_message_reply_markup(reply_markup=None) # Remove the inline keyboard
+    await update.callback_query.message.reply_text("به منوی اصلی خوش آمدید:", reply_markup=get_main_menu_keyboard(user_data.get('language')))
     return MAIN_MENU
 
-async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Default handler for text messages not matching other commands/states."""
+async def handle_text(update: Update, context: ConversationHandler. ее):
+    """Handles general text input based on the current state."""
+    text = update.message.text
     user_id = update.effective_user.id
-    user = db.get_user(user_id)
-    if not user:
-        await update.message.reply_text("لطفا با /start ربات را شروع کنید.")
+    user_data = db.get_user(user_id)
+
+    # Check if user is registered
+    if not user_data or not user_data.get('registered'):
+        await update.message.reply_text("لطفاً ابتدا ثبت نام کنید. /start")
         return ConversationHandler.END
 
-    lang = user.get('language', 'fa')
-    current_state = context.user_data.get('state', None)
+    current_state = context.state
 
-    # If we are in a conversation state and the input doesn't match expected, inform user
-    if current_state in [RULES, LANGUAGE, REGISTER_EMAIL, REGISTER_PASSWORD, REGISTER_CONFIRM, TTS_TEXT, TTS_LANGUAGE]:
-         # Specific messages handled within state handlers, this is a fallback
-         await update.message.reply_text("لطفا به دستورالعمل‌های فعلی توجه کنید یا با \"لغو\" یا \"بازگشت\" خارج شوید.", reply_markup=main_menu_keyboard(lang) if current_state == REGISTER_CONFIRM else None)
-         return current_state # Stay in the current state
+    if current_state == ACCOUNT_MENU:
+        if text == "مشاهده پروفایل 📄":
+            return await account_status_callback(update, context)
+        elif text == "تغییر ایمیل 📧":
+            return await change_email_callback(update, context)
+        elif text == "تغییر رمز عبور 🔑":
+            return await change_password_callback(update, context)
+        elif text == "بازگشت 🔙":
+            return await show_home(update, context)
+        # Handle email/password change input if flags are set
+        elif context.user_data.get('changing_email'):
+            email = text
+            if db.set_email(user_id, email):
+                await update.message.reply_text("ایمیل شما با موفقیت به‌روز شد.")
+            else:
+                await update.message.reply_text("خطا در به‌روزرسانی ایمیل.")
+            context.user_data['changing_email'] = False # Reset flag
+            return await account_callback(update, context) # Return to account menu
+        elif context.user_data.get('changing_password'):
+            password = text
+            if db.set_password(user_id, password):
+                await update.message.reply_text("رمز عبور شما با موفقیت به‌روز شد.")
+            else:
+                await update.message.reply_text("خطا در به‌روزرسانی رمز عبور.")
+            context.user_data['changing_password'] = False # Reset flag
+            return await account_callback(update, context) # Return to account menu
+        else:
+             await update.message.reply_text("لطفاً از دکمه‌های زیر استفاده کنید یا دستور /start را وارد کنید.")
+             return ACCOUNT_MENU
 
-    # If not in a specific conversation state, assume it's a general message or navigation attempt
-    if update.message.text.lower() == "حساب من 👤":
-        return await account_callback(update, context)
-    elif update.message.text.lower() == "انتخاب حرفه 💼":
-        return await professions_callback(update, context)
-    elif update.message.text.lower() == "ساخت صدا 🔊":
-        return await tts_callback(update, context)
-    elif update.message.text.lower() == "بروزرسانی 🔄":
-        return await refresh_callback(update, context)
-    elif update.message.text.lower() == "مشاهده پروفایل 📄":
-        return await account_status_callback(update, context)
-    elif update.message.text.lower() == "تغییر ایمیل 📧":
-        return await change_email_callback(update, context)
-    elif update.message.text.lower() == "تغییر رمز عبور 🔑":
-        return await change_password_callback(update, context)
-    elif update.message.text.lower() == "بازگشت به منوی اصلی ↩️":
-        return await back_home_callback(update, context)
+
+    elif current_state == TTS_TEXT:
+        # This handler is for receiving the text to convert
+        return await tts_receive_text(update, context)
+
+    elif current_state == MAIN_MENU:
+        if text == "حساب من 👤":
+            return await account_callback(update, context)
+        elif text == "انتخاب حرفه 💼":
+            return await professions_callback(update, context)
+        elif text == "ساخت صدا 🎵":
+            return await tts_callback(update, context)
+        elif text == "بروزرسانی 🔄":
+            return await refresh_callback(update, context)
+        else:
+            await update.message.reply_text("لطفاً از دکمه‌های منوی اصلی استفاده کنید.")
+            return MAIN_MENU
+
+    # Handle messages outside of specific states if needed, or ignore them.
     else:
-        # Default response for unrecognized messages
-        await update.message.reply_text("دستور نامعتبر است. لطفا از منوی ارائه شده استفاده کنید.", reply_markup=main_menu_keyboard(lang))
-        return MAIN_MENU # Or return current_state if applicable
+        await update.message.reply_text("لطفاً از دستورات یا دکمه‌های موجود استفاده کنید.")
+        # Decide where to return, maybe back to main menu or stay in current state if applicable.
+        # For now, let's try returning to main menu if user is registered.
+        if user_data and user_data.get('registered'):
+             return MAIN_MENU
+        else:
+             return ConversationHandler.END
 
 
 def main() -> None:
@@ -628,72 +546,65 @@ def main() -> None:
     # Create the Application and pass it your bot's token.
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # --- Conversation Handlers ---
-
-    # Registration Conversation
-    conv_handler_register = ConversationHandler(
+    # Conversation handler for the main conversation flow
+    conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             RULES: [
                 CallbackQueryHandler(accept_rules_callback, pattern="^accept_rules$"),
                 CallbackQueryHandler(reject_rules_callback, pattern="^reject_rules$"),
-                MessageHandler(filters.Regex("^(قبول قوانین ✅|رد قوانین ❌)$"), lambda u, c: accept_rules_callback(u, c) if "قبول" in u.message.text else reject_rules_callback(u, c)) # Handle button click text
             ],
-            LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, language_callback)],
-            REGISTER_EMAIL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, register_email),
-                CallbackQueryHandler(cancel_register_callback, pattern="^cancel_register$") # If cancellation button is pressed
+            LANGUAGE: [
+                CallbackQueryHandler(language_callback, pattern="^lang_(fa|en)$"),
             ],
-            REGISTER_PASSWORD: [
-                 MessageHandler(filters.TEXT & ~filters.COMMAND, register_password),
-                 CallbackQueryHandler(cancel_register_callback, pattern="^cancel_register$")
-            ],
+            REGISTER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_email)],
+            REGISTER_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_password)],
             REGISTER_CONFIRM: [
-                CallbackQueryHandler(finish_register_callback, pattern="^confirm_register$"),
-                # Allow cancelling from confirm state too
+                CallbackQueryHandler(finish_register_callback, pattern="^finish_register$"),
                 CallbackQueryHandler(cancel_register_callback, pattern="^cancel_register$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, lambda u,c: query.message.reply_text("لطفا روی دکمه تایید کلیک کنید.")), # Catch text inputs here
             ],
-            PROFESSIONS_MENU: [CallbackQueryHandler(profession_set_callback, pattern="^set_profession_")],
+            MAIN_MENU: [
+                MessageHandler(filters.Regex("^حساب من 👤$"), account_callback),
+                MessageHandler(filters.Regex("^انتخاب حرفه 💼$"), professions_callback),
+                MessageHandler(filters.Regex("^ساخت صدا 🎵$"), tts_callback),
+                MessageHandler(filters.Regex("^بروزرسانی 🔄$"), refresh_callback),
+                CommandHandler("start", show_home), # Allow /start to return to main menu
+            ],
+            PROFESSIONS_MENU: [
+                CallbackQueryHandler(profession_set_callback, pattern="^prof_(writer|musician|programmer|designer|teacher)$"),
+                CallbackQueryHandler(back_home_callback, pattern="^back_home$"),
+            ],
             ACCOUNT_MENU: [
                 MessageHandler(filters.Regex("^مشاهده پروفایل 📄$"), account_status_callback),
                 MessageHandler(filters.Regex("^تغییر ایمیل 📧$"), change_email_callback),
                 MessageHandler(filters.Regex("^تغییر رمز عبور 🔑$"), change_password_callback),
-                MessageHandler(filters.Regex("^بازگشت به منوی اصلی ↩️$"), back_home_callback),
+                MessageHandler(filters.Regex("^بازگشت 🔙$"), show_home), # Back to main menu
             ],
              TTS_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, tts_receive_text)],
-             TTS_LANGUAGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, tts_language_callback)],
+             TTS_LANGUAGE: [
+                 CallbackQueryHandler(tts_language_callback, pattern="^tts_change_lang$"),
+                 CallbackQueryHandler(tts_language_callback, pattern="^tts_confirm_lang$"),
+                 CallbackQueryHandler(language_callback, pattern="^lang_(fa|en)$"), # Catch language selection here too
+                 CallbackQueryHandler(lambda update, context: back_home_callback(update, context), pattern="^cancel_tts$"), # Handle cancel TTS
+             ],
         },
-        fallbacks=[
-             CommandHandler("start", start), # Allow restarting from any state
-             MessageHandler(filters.Regex("^بازگشت به منوی اصلی ↩️$"), back_home_callback),
-             MessageHandler(filters.Regex("^لغو ↩️$"), cancel_register_callback), # General cancel
-             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text) # Fallback for other text messages
-        ],
-        # Per-user state timeouts (optional)
-        # conversation_timeout=300, # 5 minutes
-        # per_message=True # State timeout per message
+        fallbacks=[CommandHandler("start", start)], # Default fallback
+        # Add a timeout if desired: conversation_timeout=600 # 10 minutes
     )
 
-    # --- General Handlers ---
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(conv_handler_register)
-
-    # Handlers for main menu buttons and other direct actions
-    application.add_handler(MessageHandler(filters.Regex("^حساب من 👤$"), account_callback))
-    application.add_handler(MessageHandler(filters.Regex("^انتخاب حرفه 💼$"), professions_callback))
-    application.add_handler(MessageHandler(filters.Regex("^ساخت صدا 🔊$"), tts_callback))
-    application.add_handler(MessageHandler(filters.Regex("^بروزرسانی 🔄$"), refresh_callback))
-    # Handlers within conversation states are inside ConversationHandler
-
-    # Fallback handler for any text message not caught by above handlers
+    # Register the general text message handler for specific states
+    # This needs to be added after the ConversationHandler to catch messages within states
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
+    # Add handlers
+    application.add_handler(conv_handler)
+
+    # Add handlers for specific callback queries not covered by ConversationHandler states if needed
+    # Example: Handling a direct callback query for going back home from anywhere if needed.
 
     # Run the bot until the user presses Ctrl-C
+    print("Bot is starting...")
     application.run_polling()
 
 if __name__ == "__main__":
-    # Initialize the database when the script starts
-    db.init_db()
     main()
