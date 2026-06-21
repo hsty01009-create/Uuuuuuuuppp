@@ -1,6 +1,7 @@
 import uuid
 import asyncio
 import edge_tts
+import os
 
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
@@ -10,14 +11,14 @@ from telegram.ext import (
 
 import db
 
-TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN")
 
 # ---------- KEYBOARD ----------
 def kb():
     return ReplyKeyboardMarkup([
         ["👤 پروفایل", "🎤 ساخت صدا"],
         ["💰 امتیاز", "🔗 دعوت"],
-        ["👨‍👩‍👧 صدا مرد", "👩 صدا زن"]
+        ["👨 صدا مرد", "👩 صدا زن"]
     ], resize_keyboard=True)
 
 # ---------- START ----------
@@ -26,7 +27,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     db.create_user(user.id, user.first_name)
 
-    # invite system
     if context.args:
         inviter = int(context.args[0])
         if inviter != user.id:
@@ -44,12 +44,10 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = f"""
 👤 پروفایل
-
 🆔 {u['user_id']}
 👤 {u['name']}
 🎤 صدا: {u['voice']}
 ⭐ امتیاز: {u['points']}
-
 👨‍💻 سازنده: امیرعلی فروزان‌اصل
 """
 
@@ -66,35 +64,36 @@ async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
     link = f"https://t.me/YOUR_BOT?start={update.effective_user.id}"
 
     await update.message.reply_text(
-        f"🔗 لینک دعوت:\n{link}\n\n+200 امتیاز برای هر دعوت"
+        f"🔗 لینک دعوت:\n{link}\n\n+200 امتیاز"
     )
 
-# ---------- SET VOICE ----------
+# ---------- VOICE ----------
 async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.set_voice(update.effective_user.id, "male")
-    await update.message.reply_text("👨 صدای مرد انتخاب شد")
+    await update.message.reply_text("👨 صدای مرد فعال شد")
 
 async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.set_voice(update.effective_user.id, "female")
-    await update.message.reply_text("👩 صدای زن انتخاب شد")
+    await update.message.reply_text("👩 صدای زن فعال شد")
 
-# ---------- TTS ----------
+# ---------- TTS (FIXED) ----------
 async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
-    if text in ["🎤 ساخت صدا", "👤 پروفایل", "💰 امتیاز", "🔗 دعوت"]:
-        return
-
     user = db.get_user(update.effective_user.id)
 
     voice = "fa-IR-FaridNeural" if user["voice"] == "male" else "fa-IR-DilaraNeural"
 
     file = f"{uuid.uuid4()}.mp3"
 
-    tts = edge_tts.Communicate(text, voice)
-    await tts.save(file)
+    communicate = edge_tts.Communicate(text, voice)
 
-    await update.message.reply_audio(audio=open(file, "rb"))
+    await communicate.save(file)
+
+    with open(file, "rb") as audio:
+        await update.message.reply_audio(audio=audio)
+
+    os.remove(file)
 
     db.add_points(user["user_id"], 50)
 
