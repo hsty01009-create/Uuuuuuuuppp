@@ -82,7 +82,7 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🌍 {u['language']}
 ⭐ {u['points']}
 
-👨‍💻 امیرعلی فروزان‌اصل (ساندرا)
+👨‍💻 امیرعلی فروزان‌اصل (سازنده)
 """)
 
 
