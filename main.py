@@ -1,140 +1,203 @@
-import logging
+# main.py
 import os
-import asyncio
-from telegram import Update, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import re
+import logging
+import tempfile
+from datetime import datetime
 from gtts import gTTS
-from pydub import AudioSegment
-import uuid # برای ایجاد نام فایل‌های موقت و منحصر به فرد
-from dotenv import load_dotenv # برای بارگذاری متغیرهای محیطی از فایل .env
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
-# --- تنظیمات ---
-# بارگذاری متغیرهای محیطی از فایل .env (برای اجرای محلی)
-load_dotenv()
+TOKEN = os.getenv("BOT_TOKEN")
 
-# تنظیمات لاگ‌گیری
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
 
-# خواندن توکن ربات از متغیر محیطی
-# در Railway، این متغیر محیطی را تنظیم خواهید کرد.
-# برای اجرای محلی، یک فایل .env در کنار این کد بسازید و در آن بنویسید:
-# BOT_TOKEN="YOUR_TELEGRAM_BOT_TOKEN"
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    logger.error("خطا: متغیر محیطی BOT_TOKEN تنظیم نشده است.")
-    raise ValueError("BOT_TOKEN is not set. Please set it in your environment or in a .env file.")
+LANGUAGES = {
+    "فارسی": "fa",
+    "English": "en",
+    "ترکی": "tr",
+    "عربی": "ar",
+    "کردی": "ku",
+    "روسی": "ru",
+}
 
-CREATOR_NAME = "امیر علی فروزان اصل"
+USER_STATE = {}
+USER_NAME = {}
 
-# --- هندلرهای ربات ---
+RULES_TEXT = (
+    "📜 قوانین ربات:\n"
+    "1) ارسال محتوای توهین‌آمیز یا خلاف قوانین ممنوع اس.\n"
+    "2) از ربات فقط برای تولید صدای مجاز استفاده کن.\n"
+    "3) برای شهیدان و معترضاندی دی ماه صلوات بفرستید حداقل کاري است که می توانید کنید🇮🇷.\n"
+    "4) درخواست‌های غیرمجاز یا آزاردهنده پردازش نمی‌شوند.\n"
+    "5) احترام به دیگران الزامی است.\n"
+    "6) مسئولیت محتوای ارسالی با کاربر است.\n"
+    "7) ربات ممکن است برای پردازش بعضی متن‌ها محدودیتت داشته باشد.\n"
+    "8) از ارسال اسپم خودداری کنید.\n"
+)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """دستور /start را مدیریت می‌کند."""
+BIRTHDAY_TEXT = (
+    "تولدت مبارک 🎉\n"
+    "امروز روز قشنگیه چون روز تولد توئه.\n"
+    "برات سلامتی، شادی، آرامش و موفقیت آرزو می‌کنم.\n"
+    "همیشه بدرخشی و بهترین اتفاق‌ها برات بیفته."
+)
+
+def clean_name(name: str) -> str:
+    if not name:
+        return "کاربر عزیز"
+    name = re.sub(r"[@_.*!#$%^&+=<>{}\[\]\\|/\\-]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip()
+    return name[:30] if len(name) > 30 else name
+
+def get_display_name(update: Update) -> str:
     user = update.effective_user
-    await update.message.reply_html(
-        rf"سلام {user.mention_html()}! من ربات تبدیل متن به صدا هستم."
-        f"\nمن توسط {CREATOR_NAME} ساخته شده‌ام."
-        "\nلطفاً متن خود را به فارسی یا انگلیسی برای من بفرستید تا آن را به صدا تبدیل کنم."
-        "\nمی‌توانید زبان را با دستور /lang مشخص کنید (مثلاً /lang fa یا /lang en)."
+    first = clean_name(user.first_name or "")
+    last = clean_name(user.last_name or "")
+    full = f"{first} {last}".strip()
+    return full if full else (user.username or "کاربر عزیز")
+
+def main_menu():
+    return ReplyKeyboardMarkup(
+        [
+            ["🎙 ساخت صدا", "🎂 متن تولد"],
+            ["🌐 انتخاب زبان", "📜 قوانین"],
+        ],
+        resize_keyboard=True
     )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """دستور /help را مدیریت می‌کند."""
+def language_menu():
+    return ReplyKeyboardMarkup(
+        [
+            ["فارسی", "English"],
+            ["ترکی", "عربی"],
+            ["کردی", "روسی"],
+            ["⬅️ بازگشت"],
+        ],
+        resize_keyboard=True
+    )
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = get_display_name(update)
+    USER_NAME[update.effective_user.id] = name
+    USER_STATE[update.effective_user.id] = {"mode": "menu", "lang": "fa"}
+
+    text = (
+        f"سلام {name} 👋\n\n"
+        "به ربات ساخت صدا خوش اومدی.\n"
+        "از منوی زیر یکی از گزینه‌ها را انتخاب کن."
+    )
+    await update.message.reply_text(text, reply_markup=main_menu())
+
+async def show_rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(RULES_TEXT, reply_markup=main_menu())
+
+async def choose_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "دستورات موجود:\n"
-        "/start - شروع مکالمه و نمایش پیام خوش‌آمدگویی\n"
-        "/help - نمایش این پیام راهنما\n"
-        "/lang <fa|en> - تغییر زبان متن برای تبدیل به صدا (پیش‌فرض: فارسی)\n"
-        "\nفقط کافیست متن مورد نظرتان را تایپ کنید و برای من بفرستید."
+        "زبان موردنظر را انتخاب کن:",
+        reply_markup=language_menu()
     )
 
-async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """زبان تبدیل متن به صدا را تنظیم می‌کند."""
-    chat_id = update.message.chat_id
-    args = context.args
+async def birthday_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = USER_NAME.get(update.effective_user.id, get_display_name(update))
+    text = f"تولدت مبارک {name} 🎉\n\n{BIRTHDAY_TEXT}"
+    await update.message.reply_text(text, reply_markup=main_menu())
 
-    if not args:
-        await update.message.reply_text("لطفاً زبان را مشخص کنید. مثلاً: /lang fa یا /lang en")
+async def set_language(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang_name = update.message.text
+    if lang_name in LANGUAGES:
+        USER_STATE.setdefault(user_id, {})["lang"] = LANGUAGES[lang_name]
+        USER_STATE[user_id]["mode"] = "voice"
+        await update.message.reply_text(
+            f"زبان روی {lang_name} تنظیم شد.\nحالا متن را بفرست تا صدا ساخته شود.",
+            reply_markup=main_menu()
+        )
+
+async def text_to_speech(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    state = USER_STATE.get(user_id, {"lang": "fa", "mode": "voice"})
+    lang = state.get("lang", "fa")
+
+    text = update.message.text.strip()
+    if not text:
         return
 
-    lang_code = args[0].lower()
-    if lang_code not in ["fa", "en"]:
-        await update.message.reply_text("زبان نامعتبر است. لطفاً از 'fa' برای فارسی یا 'en' برای انگلیسی استفاده کنید.")
+    if len(text) > 2500:
+        await update.message.reply_text("متن خیلی طولانی است. لطفاً کوتاه‌تر بفرست.")
         return
 
-    # ذخیره زبان در داده‌های کاربر (برای حفظ در طول مکالمه)
-    context.user_data['language'] = lang_code
-    await update.message.reply_text(f"زبان به '{'فارسی' if lang_code == 'fa' else 'انگلیسی'}' تغییر یافت.")
-
-async def text_to_speech(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """متن کاربر را گرفته و به صدا تبدیل می‌کند."""
-    user_text = update.message.text
-    chat_id = update.message.chat_id
-    
-    # دریافت زبان از داده‌های کاربر، اگر تنظیم نشده باشد، پیش‌فرض فارسی در نظر گرفته می‌شود
-    lang = context.user_data.get('language', 'fa')
-
-    logger.info(f"دریافت متن برای تبدیل به صدا از کاربر {update.effective_user.id} (زبان: {lang}): {user_text[:50]}...")
-
-    await update.message.reply_text("⏳ در حال ساخت صدا...")
+    await update.message.reply_text("در حال ساخت صدا... ⏳")
 
     try:
-        # --- تولید فایل صوتی با gTTS ---
-        tts = gTTS(text=user_text, lang=lang, slow=False) # slow=False برای سرعت عادی
-        
-        # ایجاد یک نام فایل منحصر به فرد برای ذخیره موقت
-        temp_filename = f"temp_audio_{uuid.uuid4()}.mp3"
-        tts.save(temp_filename)
-        
-        # --- تبدیل فرمت با pydub (اختیاری، اگر لازم باشد) ---
-        # gTTS مستقیماً MP3 تولید می‌کند، اما اگر فرمت دیگری نیاز بود، اینجا تبدیل انجام می‌شود
-        # audio = AudioSegment.from_mp3(temp_filename)
-        # converted_filename = f"output_audio_{uuid.uuid4()}.ogg" # مثال: تبدیل به OGG
-        # audio.export(converted_filename, format="ogg")
-        
-        # --- ارسال فایل صوتی به تلگرام ---
-        # برای ارسال به عنوان فایل صوتی، از InputFile استفاده می‌کنیم
-        audio_file = InputFile(temp_filename)
-        
-        await update.message.reply_audio(audio_file, caption=f"صدای تولید شده از متن شما (زبان: {lang})")
-        
-        # --- پاک کردن فایل موقت ---
-        os.remove(temp_filename)
-        # if os.path.exists(converted_filename):
-        #     os.remove(converted_filename)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+            file_path = tmp.name
 
-    except Exception as e:
-        logger.error(f"خطای غیرمنتظره در تبدیل متن به صدا: {e}")
-        await update.message.reply_text("😥 متاسفانه خطایی در ساخت صدا رخ داد. لطفاً دوباره امتحان کنید.")
-        # پاک کردن فایل موقت در صورت بروز خطا
-        if 'temp_filename' in locals() and os.path.exists(temp_filename):
-            os.remove(temp_filename)
+        tts = gTTS(text=text, lang=lang)
+        tts.save(file_path)
 
-def main() -> None:
-    """ربات را راه‌اندازی می‌کند."""
-    if not BOT_TOKEN:
-        logger.error("توکن ربات تنظیم نشده است. لطفاً متغیر محیطی BOT_TOKEN را تنظیم کنید.")
+        with open(file_path, "rb") as audio:
+            await update.message.reply_voice(voice=audio)
+
+    except Exception:
+        await update.message.reply_text(
+            "❌ خطا در ساخت صدا رخ داد.\n"
+            "لطفاً دوباره تلاش کن یا متن کوتاه‌تر بفرست."
+        )
+    finally:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+
+    if text == "📜 قوانین":
+        return await show_rules(update, context)
+
+    if text == "🌐 انتخاب زبان":
+        return await choose_language(update, context)
+
+    if text == "🎂 متن تولد":
+        return await birthday_mode(update, context)
+
+    if text == "🎙 ساخت صدا":
+        await update.message.reply_text(
+            "متن را بفرست تا برات به صدا تبدیل کنم.",
+            reply_markup=main_menu()
+        )
+        USER_STATE.setdefault(update.effective_user.id, {})["mode"] = "voice"
         return
 
-    # ساخت Application
-    application = Application.builder().token(BOT_TOKEN).build()
+    if text == "⬅️ بازگشت":
+        await update.message.reply_text("به منوی اصلی برگشتی.", reply_markup=main_menu())
+        return
 
-    # اضافه کردن هندلرها
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("lang", set_language))
-    
-    # هندلر پیام متنی که دستور نیست
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_to_speech))
+    if text in LANGUAGES:
+        await set_language(update, context)
+        return
 
-    logger.info("ربات شروع به کار کرد. منتظر دستورات...")
+    await text_to_speech(update, context)
 
-    # اجرای ربات
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+def main():
+    if not TOKEN:
+        raise ValueError("BOT_TOKEN is not set")
 
-if __name__ == '__main__':
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling()
+
+if __name__ == "__main__":
     main()
