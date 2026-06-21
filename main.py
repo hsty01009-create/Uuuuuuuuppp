@@ -1,98 +1,155 @@
-import uuid
 import os
-import asyncio
+import uuid
 from gtts import gTTS
 
 from telegram import (
     Update,
     ReplyKeyboardMarkup,
-    KeyboardButton
+    KeyboardButton,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton
 )
 
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters
 )
 
+import db
 
 
-import os
+# ================= TOKEN =================
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+
+# ================= LANGUAGES =================
+LANGS = {
+    "fa": "🇮🇷 فارسی",
+    "en": "🇺🇸 English",
+    "ar": "🇸🇦 العربية",
+    "tr": "🇹🇷 Türkçe",
+    "de": "🇩🇪 Deutsch",
+    "ru": "🇷🇺 Русский",
+    "es": "🇪🇸 Español"
+}
 
 
-# ---------------- KEYBOARD ----------------
+TEXTS = {
+    "fa": {
+        "welcome": "👋 خوش آمدید",
+        "choose_lang": "🌍 زبان را انتخاب کنید",
+        "voice": "🎤 متن را ارسال کن",
+    },
+    "en": {
+        "welcome": "👋 Welcome",
+        "choose_lang": "🌍 Choose language",
+        "voice": "🎤 Send text",
+    }
+}
+
+
+# ================= KEYBOARD =================
 def main_kb():
     return ReplyKeyboardMarkup([
         ["👤 پروفایل", "💰 امتیاز"],
-        ["🎤 ساخت صدا", "🔗 دعوت"]
+        ["🎤 ساخت صدا", "🔗 دعوت"],
+        ["🌍 زبان"]
     ], resize_keyboard=True)
 
 
-# ---------------- START ----------------
+def lang_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(v, callback_data=k)] for k, v in LANGS.items()
+    ])
+
+
+# ================= START =================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = update.effective_user
-    db.create_user(user.id, user.username, user.first_name)
+    u = update.effective_user
+    db.create_user(u.id, u.username, u.first_name)
 
-    ref = context.args[0] if context.args else None
-
-    if ref and str(ref) != str(user.id):
-        db.add_points(int(ref), 200)
+    # referral
+    if context.args:
+        ref = context.args[0]
+        if ref.isdigit() and int(ref) != u.id:
+            db.add_points(int(ref), 200)
 
     await update.message.reply_text(
-        "سلام 👋\nبه ربات حرفه‌ای خوش آمدی",
+        "👋 خوش آمدید / Welcome",
         reply_markup=main_kb()
     )
 
 
-# ---------------- PROFILE ----------------
+# ================= PROFILE =================
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = db.get_user(update.effective_user.id)
+    u = db.get_user(update.effective_user.id)
 
-    text = f"""
+    await update.message.reply_text(f"""
 👤 پروفایل
-🆔 {user['user_id']}
-📛 {user['first_name']}
-🌍 {user['language']}
-⭐ امتیاز: {user['points']}
-👥 دعوت: {user['invited_count']}
+🆔 {u['user_id']}
+👤 {u['first_name']}
+🌍 {u['language']}
+⭐ {u['points']}
+👥 {u['invited_count']}
 
-👨‍💻 سازنده: امیرعلی فروزان‌اصل
-"""
-
-    await update.message.reply_text(text)
+👨‍💻 امیرعلی فروزان‌اصل
+""")
 
 
-# ---------------- POINTS ----------------
+# ================= POINTS =================
 async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user = db.get_user(update.effective_user.id)
+    u = db.get_user(update.effective_user.id)
+    await update.message.reply_text(f"⭐ امتیاز: {u['points']}")
 
-    await update.message.reply_text(f"⭐ امتیاز شما: {user['points']}")
 
-
-# ---------------- INVITE ----------------
+# ================= INVITE =================
 async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user_id = update.effective_user.id
+    u = update.effective_user
+    bot = await context.bot.get_me()
 
-    link = f"https://t.me/YourBot?start={user_id}"
+    link = f"https://t.me/{bot.username}?start={u.id}"
 
     await update.message.reply_text(f"🔗 لینک دعوت:\n{link}")
 
 
-# ---------------- TTS ----------------
-async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ================= LANGUAGE =================
+async def lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text(
+        "🌍 انتخاب زبان",
+        reply_markup=lang_kb()
+    )
+
+
+async def set_lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    q = update.callback_query
+    await q.answer()
+
+    db.update("language", q.data, q.from_user.id)
+
+    await q.message.reply_text("✅ زبان تغییر کرد")
+
+
+# ================= VOICE =================
+async def voice_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    await update.message.reply_text("🎤 متن را ارسال کن")
+
+
+async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text
 
-    if text in ["🎤 ساخت صدا"]:
-        await update.message.reply_text("متن را ارسال کن 👇")
+    if text in ["👤 پروفایل", "💰 امتیاز", "🔗 دعوت", "🎤 ساخت صدا", "🌍 زبان"]:
         return
 
     filename = f"{uuid.uuid4()}.mp3"
@@ -107,7 +164,7 @@ async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.add_points(update.effective_user.id, 50)
 
 
-# ---------------- HANDLER ----------------
+# ================= MAIN =================
 def main():
 
     app = Application.builder().token(TOKEN).build()
@@ -117,8 +174,12 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("👤 پروفایل"), profile))
     app.add_handler(MessageHandler(filters.Regex("💰 امتیاز"), points))
     app.add_handler(MessageHandler(filters.Regex("🔗 دعوت"), invite))
+    app.add_handler(MessageHandler(filters.Regex("🌍 زبان"), lang))
+    app.add_handler(MessageHandler(filters.Regex("🎤 ساخت صدا"), voice_start))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, tts))
+    app.add_handler(CallbackQueryHandler(set_lang))
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, voice))
 
     print("Bot running...")
     app.run_polling()
