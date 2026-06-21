@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 
 # =========================
-# حالت‌ها
+# حالت‌های ربات
 # =========================
 
 (
@@ -61,9 +61,8 @@ logger = logging.getLogger(__name__)
     MAIN_MENU,
     ACCOUNT_MENU,
     PROFESSION_MENU,
-    TTS_TEXT,
-    TTS_LANGUAGE
-) = range(10)
+    TTS_TEXT
+) = range(9)
 
 
 # =========================
@@ -86,7 +85,11 @@ PROFESSIONS = {
     "programmer": "برنامه‌نویس",
     "designer": "طراح",
     "teacher": "معلم"
-  def main_keyboard():
+    # =========================
+# منوی اصلی
+# =========================
+
+def main_keyboard():
 
     keyboard = [
         [
@@ -103,7 +106,13 @@ PROFESSIONS = {
         keyboard,
         resize_keyboard=True
     )
-  def account_keyboard():
+
+
+# =========================
+# منوی حساب کاربری
+# =========================
+
+def account_keyboard():
 
     keyboard = [
         [
@@ -120,7 +129,13 @@ PROFESSIONS = {
         keyboard,
         resize_keyboard=True
     )
-  def rules_keyboard():
+
+
+# =========================
+# دکمه قوانین
+# =========================
+
+def rules_keyboard():
 
     return InlineKeyboardMarkup([
         [
@@ -135,7 +150,13 @@ PROFESSIONS = {
             )
         ]
     ])
-  def language_keyboard():
+
+
+# =========================
+# دکمه انتخاب زبان
+# =========================
+
+def language_keyboard():
 
     return InlineKeyboardMarkup([
         [
@@ -150,7 +171,13 @@ PROFESSIONS = {
             )
         ]
     ])
-  def profession_keyboard():
+
+
+# =========================
+# دکمه انتخاب حرفه
+# =========================
+
+def profession_keyboard():
 
     return InlineKeyboardMarkup([
         [
@@ -184,7 +211,13 @@ PROFESSIONS = {
             )
         ]
     ])
-  def profile_text(user):
+
+
+# =========================
+# متن پروفایل
+# =========================
+
+def profile_text(user):
 
     return f"""
 👤 پروفایل
@@ -237,6 +270,41 @@ async def start(
     )
 
     return MAIN_MENU
+
+
+# =========================
+# قبول قوانین
+# =========================
+
+async def accept_rules(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer()
+
+    user_id = query.from_user.id
+
+    db.set_accepted_rules(
+        user_id,
+        True
+    )
+
+    db.set_first_start(
+        user_id,
+        False
+    )
+
+    await query.message.reply_text(
+        "زبان خود را انتخاب کنید.",
+        reply_markup=language_keyboard()
+    )
+
+    return LANGUAGE
+
+
 # =========================
 # رد قوانین
 # =========================
@@ -255,6 +323,8 @@ async def reject_rules(
     )
 
     return ConversationHandler.END
+
+
 # =========================
 # انتخاب زبان
 # =========================
@@ -282,6 +352,8 @@ async def choose_language(
     )
 
     return EMAIL
+
+
 # =========================
 # ثبت ایمیل
 # =========================
@@ -300,8 +372,10 @@ async def register_email(
     )
 
     return PASSWORD
+
+
 # =========================
-# ثبت رمز
+# ثبت رمز عبور
 # =========================
 
 async def register_password(
@@ -333,8 +407,10 @@ async def register_password(
     )
 
     return CONFIRM
+
+
 # =========================
-# تکمیل ثبت نام
+# تکمیل ثبت‌نام
 # =========================
 
 async def finish_register(
@@ -375,8 +451,10 @@ async def finish_register(
     )
 
     return MAIN_MENU
+
+
 # =========================
-# لغو ثبت نام
+# لغو ثبت‌نام
 # =========================
 
 async def cancel_register(
@@ -393,6 +471,7 @@ async def cancel_register(
     )
 
     return ConversationHandler.END
+
 # =========================
 # حساب کاربری
 # =========================
@@ -408,6 +487,8 @@ async def account_menu(
     )
 
     return ACCOUNT_MENU
+
+
 # =========================
 # نمایش پروفایل
 # =========================
@@ -427,6 +508,8 @@ async def show_profile(
     )
 
     return ACCOUNT_MENU
+
+
 # =========================
 # تغییر ایمیل
 # =========================
@@ -443,6 +526,8 @@ async def change_email(
     )
 
     return ACCOUNT_MENU
+
+
 # =========================
 # تغییر رمز عبور
 # =========================
@@ -459,6 +544,8 @@ async def change_password(
     )
 
     return ACCOUNT_MENU
+
+
 # =========================
 # ذخیره تغییرات حساب
 # =========================
@@ -501,7 +588,24 @@ async def account_text(
         return ACCOUNT_MENU
 
     return ACCOUNT_MENU
+
+
 # =========================
+# بازگشت به منوی اصلی
+# =========================
+
+async def account_back(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    await update.message.reply_text(
+        "منوی اصلی",
+        reply_markup=main_keyboard()
+    )
+
+    return MAIN_MENU
+    # =========================
 # انتخاب حرفه
 # =========================
 
@@ -516,6 +620,8 @@ async def profession_menu(
     )
 
     return PROFESSION_MENU
+
+
 # =========================
 # ذخیره حرفه
 # =========================
@@ -544,23 +650,10 @@ async def profession_select(
     )
 
     return MAIN_MENU
-# =========================
-# بازگشت
-# =========================
 
-async def back_home(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
 
-    await update.message.reply_text(
-        "منوی اصلی",
-        reply_markup=main_keyboard()
-    )
-
-    return MAIN_MENU
 # =========================
-# منوی TTS
+# منوی تبدیل متن به صدا
 # =========================
 
 async def tts_menu(
@@ -573,8 +666,10 @@ async def tts_menu(
     )
 
     return TTS_TEXT
+
+
 # =========================
-# دریافت متن
+# ساخت فایل صوتی
 # =========================
 
 async def tts_text(
@@ -586,19 +681,19 @@ async def tts_text(
 
     try:
 
+        filename = f"{uuid.uuid4()}.mp3"
+
         tts = gTTS(
             text=text,
             lang="fa"
         )
-
-        filename = f"{uuid.uuid4()}.mp3"
 
         tts.save(filename)
 
         with open(filename, "rb") as audio:
 
             await update.message.reply_audio(
-                audio
+                audio=audio
             )
 
         os.remove(filename)
@@ -610,13 +705,15 @@ async def tts_text(
         )
 
     await update.message.reply_text(
-        "منوی اصلی",
+        "بازگشت به منوی اصلی",
         reply_markup=main_keyboard()
     )
 
     return MAIN_MENU
+
+
 # =========================
-# بروزرسانی
+# بروزرسانی پروفایل
 # =========================
 
 async def refresh(
@@ -625,31 +722,32 @@ async def refresh(
 ):
 
     user = db.get_user(
-        update.effective_user
-      async def account_back(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+        update.effective_user.id
+    )
 
     await update.message.reply_text(
-        "منوی اصلی",
+        profile_text(user),
         reply_markup=main_keyboard()
     )
 
     return MAIN_MENU
-      # =========================
+    # =========================
 # ConversationHandler
 # =========================
 
 conv_handler = ConversationHandler(
 
     entry_points=[
-        CommandHandler("start", start)
+        CommandHandler(
+            "start",
+            start
+        )
     ],
 
     states={
 
         RULES: [
+
             CallbackQueryHandler(
                 accept_rules,
                 pattern="accept"
@@ -662,12 +760,15 @@ conv_handler = ConversationHandler(
         ],
 
         LANGUAGE: [
+
             CallbackQueryHandler(
-                choose_language
+                choose_language,
+                pattern="^(fa|en)$"
             )
         ],
 
         EMAIL: [
+
             MessageHandler(
                 filters.TEXT & ~filters.COMMAND,
                 register_email
@@ -675,6 +776,7 @@ conv_handler = ConversationHandler(
         ],
 
         PASSWORD: [
+
             MessageHandler(
                 filters.TEXT & ~filters.COMMAND,
                 register_password
@@ -682,6 +784,7 @@ conv_handler = ConversationHandler(
         ],
 
         CONFIRM: [
+
             CallbackQueryHandler(
                 finish_register,
                 pattern="finish"
@@ -747,7 +850,8 @@ conv_handler = ConversationHandler(
         PROFESSION_MENU: [
 
             CallbackQueryHandler(
-                profession_select
+                profession_select,
+                pattern="^(writer|musician|programmer|designer|teacher)$"
             )
         ],
 
@@ -767,7 +871,9 @@ conv_handler = ConversationHandler(
         )
     ]
 )
-      # =========================
+
+
+# =========================
 # اجرای ربات
 # =========================
 
@@ -784,7 +890,9 @@ def main():
     print("Bot Started...")
 
     app.run_polling()
-      # =========================
+
+
+# =========================
 # اجرای نهایی
 # =========================
 
