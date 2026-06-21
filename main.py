@@ -10,7 +10,7 @@ from telegram.ext import (
 
 import db
 
-TOKEN = "YOUR_BOT_TOKEN"
+TOKEN = os.getenv("BOT_TOKEN", "YOUR_TOKEN")
 
 # ---------- KEYBOARD ----------
 def kb():
