@@ -1,3 +1,0 @@
-pip install python-telegram-bot==21.6
-pip install gTTS
-pip install bcrypt
