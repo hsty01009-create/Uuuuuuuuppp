@@ -11,12 +11,7 @@ from telegram.ext import (
 
 import db
 
-# ---------- TOKEN SAFE ----------
 TOKEN = os.getenv("BOT_TOKEN")
-
-if not TOKEN:
-    print("❌ BOT_TOKEN is missing!")
-    exit()
 
 # ---------- KEYBOARD ----------
 def kb():
@@ -26,16 +21,6 @@ def kb():
         ["👨 صدا مرد", "👩 صدا زن"]
     ], resize_keyboard=True)
 
-# ---------- SAFE USER ----------
-def safe_user(user):
-    u = db.get_user(user.id)
-
-    if not u:
-        db.create_user(user.id, user.first_name)
-        u = db.get_user(user.id)
-
-    return u
-
 # ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -43,12 +28,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     db.create_user(user.id, user.first_name)
 
     if context.args:
-        try:
-            inviter = int(context.args[0])
-            if inviter != user.id:
-                db.add_points(inviter, 200)
-        except:
-            pass
+        inviter = int(context.args[0])
+        if inviter != user.id:
+            db.add_points(inviter, 200)
 
     await update.message.reply_text(
         "به ربات حرفه‌ای خوش آمدی 👋",
@@ -58,7 +40,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- PROFILE ----------
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    u = safe_user(update.effective_user)
+    u = db.get_user(update.effective_user.id)
 
     text = f"""
 👤 پروفایل
@@ -66,14 +48,14 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 👤 {u['name']}
 🎤 صدا: {u['voice']}
 ⭐ امتیاز: {u['points']}
+👨‍💻 سازنده: امیرعلی فروزان‌اصل
 """
 
     await update.message.reply_text(text)
 
 # ---------- POINTS ----------
 async def points(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    u = safe_user(update.effective_user)
+    u = db.get_user(update.effective_user.id)
     await update.message.reply_text(f"⭐ امتیاز شما: {u['points']}")
 
 # ---------- INVITE ----------
@@ -87,43 +69,33 @@ async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ---------- VOICE ----------
 async def male(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    u = safe_user(update.effective_user)
-    db.set_voice(u["user_id"], "male")
-
+    db.set_voice(update.effective_user.id, "male")
     await update.message.reply_text("👨 صدای مرد فعال شد")
 
 async def female(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    u = safe_user(update.effective_user)
-    db.set_voice(u["user_id"], "female")
-
+    db.set_voice(update.effective_user.id, "female")
     await update.message.reply_text("👩 صدای زن فعال شد")
 
-# ---------- TTS SAFE ----------
+# ---------- TTS (FIXED) ----------
 async def tts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    try:
-        text = update.message.text
-        u = safe_user(update.effective_user)
+    text = update.message.text
+    user = db.get_user(update.effective_user.id)
 
-        voice = "fa-IR-FaridNeural" if u["voice"] == "male" else "fa-IR-DilaraNeural"
+    voice = "fa-IR-FaridNeural" if user["voice"] == "male" else "fa-IR-DilaraNeural"
 
-        file = f"{uuid.uuid4()}.mp3"
+    file = f"{uuid.uuid4()}.mp3"
 
-        communicate = edge_tts.Communicate(text, voice)
-        await communicate.save(file)
+    communicate = edge_tts.Communicate(text, voice)
 
-        with open(file, "rb") as audio:
-            await update.message.reply_audio(audio=audio)
+    await communicate.save(file)
 
-        os.remove(file)
+    with open(file, "rb") as audio:
+        await update.message.reply_audio(audio=audio)
 
-        db.add_points(u["user_id"], 50)
+    os.remove(file)
 
-    except Exception as e:
-        print("TTS ERROR:", e)
-        await update.message.reply_text("❌ خطا در ساخت صدا")
+    db.add_points(user["user_id"], 50)
 
 # ---------- MAIN ----------
 def main():
